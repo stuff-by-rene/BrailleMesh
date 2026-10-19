@@ -3344,6 +3344,11 @@ function setBrailleMode(on) {
 // ── Braille UI rendering ────────────────────────────────────────────────────
 
 function _populateBrailleLangSelects() {
+  // Default for NEW blocks follows the UI language; UI languages without
+  // their own Braille table fall back to UEB Grade 1.
+  const uiLang = getLang();
+  const ownTable = new Set(BRAILLE_LANGUAGES.map(L => L.id));
+  const defaultSystem = ownTable.has(uiLang) ? uiLang : 'en';
   for (const sel of [brailleLangSelect, brailleEditLang]) {
     if (!sel) continue;
     sel.innerHTML = '';
@@ -3353,6 +3358,7 @@ function _populateBrailleLangSelects() {
       opt.textContent = L.label;
       sel.appendChild(opt);
     }
+    if (sel === brailleLangSelect) sel.value = defaultSystem;
   }
 }
 
@@ -3589,7 +3595,7 @@ function _defaultPlacementName(B, exceptIdx = -1) {
 function _addBrailleBlock() {
   const text = (brailleTextInput.value ?? '').trim();
   if (!text) return;
-  const params = { ...BRAILLE_DEFAULTS, language: brailleLangSelect?.value || 'de' };
+  const params = { ...BRAILLE_DEFAULTS, language: brailleLangSelect?.value || 'en' };
   const label = text.split(/\r?\n/)[0].trim().slice(0, 24) || 'Braille';
   braillePool.push({ id: ++_brailleSeq, label, text, params, placements: [] });
   brailleTextInput.value = '';
@@ -3816,7 +3822,7 @@ function _deleteBraillePlacement(pi) {
 function _resetBrailleParams() {
   const B = braillePool[brailleActiveBlock];
   if (!B) return;
-  B.params = { ...BRAILLE_DEFAULTS, language: brailleLangSelect?.value || 'de' };
+  B.params = { ...BRAILLE_DEFAULTS, language: brailleLangSelect?.value || 'en' };
   _renderBraillePool();
   _renderBrailleEditor();
   updatePreview();

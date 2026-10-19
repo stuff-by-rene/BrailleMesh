@@ -288,7 +288,7 @@ export const BRAILLE_LANGUAGES = [
   { id: 'de',      label: 'Deutsch (Vollschrift)' },
   { id: 'de-kurz', label: 'Deutsch (Kurzschrift, vereinfacht)' },
   { id: 'en',      label: 'English (UEB Grade 1)' },
-  { id: 'en-g2',   label: 'English (UEB Grade 2, vereinfacht)' },
+  { id: 'en-g2',   label: 'English (UEB Grade 2, contracted)' },
   { id: 'fr',      label: 'Français (Grade 1)' },
   { id: 'es',      label: 'Español (Grade 1)' },
   { id: 'it',      label: 'Italiano (Grade 1)' },
