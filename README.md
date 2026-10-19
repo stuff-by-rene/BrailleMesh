@@ -29,12 +29,12 @@ Load an STL, OBJ, 3MF, or STEP file, pick a texture, tune the parameters, and ex
 ## Features
 
 ### Braille (default workspace)
-- **Text blocks** — type a word, pick one of 6 Braille systems (German Vollschrift/Kurzschrift, English UEB Grade 1/2, French, Spanish) and add it to the pool
+- **Text blocks** — type a word, pick one of 8 Braille systems (German Vollschrift/Kurzschrift, English UEB Grade 1/2, French, Spanish, Italian, Portuguese) and add it to the pool
 - **Place on the model** — drag a block onto any face; every placement keeps its own position, rotation and name, and the view swings to it on click
 - **Raised or embedded** — dots stand proud of the surface, or the whole block sits in one recessed frame with flush dot tops
 - **Readable black-print caption** — optionally engraved or embossed under each Braille line, for sighted readers
 - **Per-block parameters** — dot diameter/spacing/height/rounding, cell/word/row spacing, alignment, raster resolution
-- **Separate-part export** — the Braille stays a separate, colourable part in the exported STL
+- **Separate-part export** — in the exported 3MF the Braille is its own printable volume beside the base body, colourable independently in the slicer
 
 ### Textures
 - **101 built-in seamless textures** in eight categories (geometric, patterns, organic, fabric, natural, grip, molded, tires): weaves, knurling, carbon twill, chainmail, scales, bark, wood grain, cobblestone, Japandi flutes and ripples, mold grains (sand matte, VDI spark erosion, leather, haircell), tire treads (touring, mud-terrain, truck rib, tractor, loader), Hero Patterns and more
@@ -119,6 +119,19 @@ Load an STL, OBJ, 3MF, or STEP file, pick a texture, tune the parameters, and ex
 6. Export as STL or 3MF.
 
 > **Note:** All processing runs entirely in the browser — no data is uploaded to any server.
+
+## How the Braille workspace works
+
+BrailleMesh opens in the Braille workspace; the header toggle switches to the texture workspace and back.
+
+1. **Add a block** — type a word, pick the Braille system, click **Add**. Blocks collect in the pool; each holds its text, parameters and the generated dot layout.
+2. **Place it** — drag a block from the pool onto any face of the model: it snaps to that face. Click a placement to swing the view to it, rename it, or drag it along the face.
+3. **Tune it** — every block carries its own parameters: dot diameter, dot/cell/word/row spacing, dot height and rounding, alignment, raster resolution. Edits apply to all of the block's placements; changing a single placement detaches it into its own block.
+4. **Raised or embedded** — raised: dots stand proud of the surface. Embedded: the whole block sits in one recessed frame, dot tops flush with the surface.
+5. **Black-print caption** — optionally write the word as readable black print under each Braille line (raised or engraved), so sighted readers can check it.
+6. **Export** — in the exported 3MF the Braille is a separate printable volume beside the base body; STL export carries the relief in the surface.
+
+The example cube starts without a texture; the map you had active in your last session is restored automatically.
 
 ## Project Structure
 
