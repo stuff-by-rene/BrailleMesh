@@ -7,24 +7,9 @@ A browser-based tool for adding Braille reliefs and displacement textures to 3D 
 > **Fork of [BumpMesh by CNC Kitchen](https://github.com/CNCKitchen/stlTexturizer)** (AGPL-3.0).
 > BrailleMesh makes the Braille workspace the default and keeps the original texture
 > pipeline fully intact. Original author: Stefan Hermann — `LICENSE` and all copyright
-> headers remain unchanged.
+> headers remain unchanged. The base project's history: [changelog.html](changelog.html).
 
-Load an STL, OBJ, 3MF, or STEP file, pick a texture, tune the parameters, and export a new displaced STL ready for slicing.
-
-## Recent Updates
-
-- Roughly 2× more triangles for the same memory — pipeline peak cut from ~660 to ~330 bytes per subdivided triangle, with bit-identical output
-- STEP import (`.step` / `.stp`) via [meshStep](https://github.com/CNCKitchen/meshStep)
-- Save / load project files (`.bumpmesh`)
-- Undo / redo history
-- Part rotation gizmo
-- Mesh diagnostics
-- Smooth masking borders with selectable transition curves (linear, S-curve, ease-in)
-- New languages: Italian, Spanish, Portuguese, Japanese, French
-- 2–3× speed improvement
-- 3MF export
-- Mouse-wheel fine tuning of values
-- Quality of life improvements
+Load a model, type a word, place Braille on its surfaces, and export a print-ready file — or switch to the texture workspace to displace surfaces with 101 built-in textures.
 
 ## Features
 
