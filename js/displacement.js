@@ -449,6 +449,11 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     const lset = layer.settings;
     const { imageData, imgWidth, imgHeight } = layer;
 
+    // Braille-block layer: sampled in the block's own frame (see
+    // brailleBlocks.js) instead of a projection; its cover comes from the
+    // content rect × face anchor, not from paint masks.
+    const blockDesc = lset.block || null;
+
     // Texture aspect correction so non-square textures keep their proportions.
     // The shorter axis gets aspect > 1 so it tiles faster, making each tile
     // proportionally shorter in world-space to match the texture's content.
@@ -470,6 +475,9 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     const dispCacheVal = new Float64Array(uniqueCount);
     const dispCacheSet = new Uint8Array(uniqueCount);
     const groupGrey = creases ? new Float64Array(creases.groupCount) : null;
+    // Block layers: per-position (and per crease group) cover weight.
+    const blockCover = blockDesc ? new Float32Array(uniqueCount) : null;
+    const groupBlockCover = (blockDesc && creases) ? new Float32Array(creases.groupCount) : null;
 
     const md = Math.max(bounds.size.x, bounds.size.y, bounds.size.z, 1e-6);
     const relScale = scaleMmToRelative(6, lset, bounds);
@@ -495,7 +503,12 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
         for (let g = 0; g < creases.groups[slot]; g++) {
           const k = creases.start[slot] + g;
           const node = _groupNode(creases, uniqueCount, slot, g);
-          if (lset.mappingMode === 6 /* MODE_CUBIC */) {
+          if (blockDesc) {
+            const s = _blockSample(imageData.data, imgWidth, imgHeight, blockDesc,
+              tmpPos.x, tmpPos.y, tmpPos.z, blendNrmX[node], blendNrmY[node], blendNrmZ[node]);
+            groupGrey[k] = s.grey;
+            groupBlockCover[k] = s.cover;
+          } else if (lset.mappingMode === 6 /* MODE_CUBIC */) {
             const w = getCubicBlendWeights(
               { x: blendNrmX[node], y: blendNrmY[node], z: blendNrmZ[node] }, cubicBlend, cubicBandWidth);
             groupGrey[k] = cubicGrey(w.x, w.y, w.z, creases.nrmX[k], creases.nrmY[k], creases.nrmZ[k]);
@@ -505,6 +518,15 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
               lset.mappingMode, settingsWithAspect, bounds);
           }
         }
+        continue;
+      }
+
+      // Braille block: block-local sampling with face anchor.
+      if (blockDesc) {
+        const s = _blockSample(imageData.data, imgWidth, imgHeight, blockDesc,
+          tmpPos.x, tmpPos.y, tmpPos.z, blendNrmX[vid], blendNrmY[vid], blendNrmZ[vid]);
+        dispCacheVal[vid] = s.grey;
+        blockCover[vid] = s.cover;
         continue;
       }
 
@@ -571,7 +593,8 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
       const grey = dispCacheVal[vid];
       const pinned = isPinned(vid);
       const mfTotal = maskedFracTotal[vid];
-      const maskedFrac = mfTotal > 0 ? maskedFracMasked[vid] / mfTotal : 0;
+      // Block layers ignore the global angle masks — the block owns its face.
+      const maskedFrac = blockDesc ? 0 : (mfTotal > 0 ? maskedFracMasked[vid] / mfTotal : 0);
       const centeredGrey = symmetric ? (grey - 0.5) : grey;
       const falloffFactor = falloffArr ? falloffArr[vid] : 1.0;
       let disp = pinned ? 0 : falloffFactor * (1 - maskedFrac) * centeredGrey * amplitude;
@@ -582,7 +605,8 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
         acc[vid] += disp;
       } else {
         // "Over": where this layer covers, the layers below fade out.
-        const cover = pinned ? 0 : (softMax ? 1 - softMax[vid] : 1);
+        let cover = pinned ? 0 : (softMax ? 1 - softMax[vid] : 1);
+        if (blockDesc) cover *= blockCover ? blockCover[vid] : 0;
         acc[vid] = acc[vid] * (1 - cover) + disp;
       }
     }
@@ -597,7 +621,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
         for (let g = 0; g < creases.groups[s]; g++) {
           const k = creases.start[s] + g;
           const gArea = creases.area[k];
-          const maskedFrac = gArea > 0 ? creases.masked[k] / gArea : 0;
+          const maskedFrac = blockDesc ? 0 : (gArea > 0 ? creases.masked[k] / gArea : 0);
           const centeredGrey = symmetric ? (groupGrey[k] - 0.5) : groupGrey[k];
           let disp = pinned ? 0 : falloffFactor * (1 - maskedFrac) * centeredGrey * amplitude;
           if (softMax) disp *= 1 - softMax[vid];
@@ -606,7 +630,8 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
           } else if (blendAdd) {
             groupAcc[k] += disp;
           } else {
-            const cover = pinned ? 0 : (softMax ? 1 - softMax[vid] : 1);
+            let cover = pinned ? 0 : (softMax ? 1 - softMax[vid] : 1);
+            if (blockDesc) cover *= groupBlockCover ? groupBlockCover[k] : 0;
             groupAcc[k] = groupAcc[k] * (1 - cover) + disp;
           }
         }
@@ -990,6 +1015,56 @@ function _projectedGrey(data, w, h, pos, nrm, mode, settings, bounds) {
     return grey;
   }
   return sampleBilinear(data, w, h, uvResult.u, uvResult.v);
+}
+
+// ── Braille block sampling (Pass 2) ──────────────────────────────────────
+
+/**
+ * Sample a Braille block's map at a model point: block-local millimetres →
+ * map UV (clamped, no tiling), grey via clamped bilinear, cover = content-rect
+ * membership × face anchor (smoothstep 0.85→0.95, mirrors the shader).
+ */
+function _blockSample(data, w, h, d, x, y, z, nx, ny, nz) {
+  const dx = x - d.center[0], dy = y - d.center[1], dz = z - d.center[2];
+  const a = dx * d.r[0] + dy * d.r[1] + dz * d.r[2];
+  const b = dx * d.u[0] + dy * d.u[1] + dz * d.u[2];
+  // Off-plane band: the relief only applies near the plane the block was
+  // placed on — parallel surfaces with the same normal direction inside the
+  // block's rectangle (steps, counterbores, inner floors) stay untouched.
+  // Mirrors previewMaterial.js blockGreyAt; the band reaches down to a
+  // recessed pocket's floor (≈ map amplitude) and out to the anchored
+  // curvature sagitta (blockTolerance + 1).
+  const nd = dx * d.n[0] + dy * d.n[1] + dz * d.n[2];
+  if (Math.abs(nd) > Math.max(d.tol + 1, d.amplitudeMm + 1.5)) {
+    return { grey: 0.5, cover: 0 };
+  }
+  const u = Math.min(1, Math.max(0, (a + d.widthMm / 2) / d.widthMm));
+  const v = Math.min(1, Math.max(0, (b + d.heightMm / 2) / d.heightMm));
+  const c = d.contentUV;
+  const inside = (u >= c[0] && u <= c[0] + c[2] && v >= c[1] && v <= c[1] + c[3]) ? 1 : 0;
+  const cos = nx * d.n[0] + ny * d.n[1] + nz * d.n[2];
+  const t = Math.min(1, Math.max(0, (cos - 0.85) / 0.10));
+  return { grey: _blockBilinear(data, w, h, u, v), cover: inside * t * t * (3 - 2 * t) };
+}
+
+/** Clamped bilinear grey sample (no wrap — block maps are standalone). */
+function _blockBilinear(data, w, h, u, v) {
+  v = 1 - v;   // image rows run top-down; v is up
+  const fx = Math.min(w - 1e-3, Math.max(0, u * w - 0.5));
+  const fy = Math.min(h - 1e-3, Math.max(0, v * h - 0.5));
+  let x0 = Math.floor(fx), y0 = Math.floor(fy);
+  const tx = fx - x0, ty = fy - y0;
+  const x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+  x0 = Math.min(w - 1, Math.max(0, x0));
+  y0 = Math.min(h - 1, Math.max(0, y0));
+  const v00 = data[(y0 * w + x0) * 4] / 255;
+  const v10 = data[(y0 * w + x1) * 4] / 255;
+  const v01 = data[(y1 * w + x0) * 4] / 255;
+  const v11 = data[(y1 * w + x1) * 4] / 255;
+  return v00 * (1 - tx) * (1 - ty)
+       + v10 * tx * (1 - ty)
+       + v01 * (1 - tx) * ty
+       + v11 * tx * ty;
 }
 
 // ── Boundary falloff distance field ──────────────────────────────────────────

@@ -1,8 +1,8 @@
 services:
   bumpmesh:
-    container_name: ${CONTAINER_NAME:-bumpmesh}
+    container_name: ${CONTAINER_NAME:-braillemesh}
     build: .
-    image: bumpmesh:latest
+    image: braillemesh:latest
     ports:
       - "${HOST_PORT:-8080}:${CONTAINER_PORT:-80}"
     restart: unless-stopped

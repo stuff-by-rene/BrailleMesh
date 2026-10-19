@@ -184,3 +184,103 @@ function* modelChunks(vertices, indices) {
     '<build>\n<item objectid="1"/>\n</build>\n</model>\n';
   yield enc.encode(pending);
 }
+
+const _XML_ESCAPE_NAMES = { '<': 'lt', '>': 'gt', '&': 'amp', '"': 'quot', "'": 'apos' };
+const _xmlEscape = (s) => String(s ?? '').replace(/[<>&"']/g, (c) => '&' + _XML_ESCAPE_NAMES[c] + ';');
+
+/**
+ * 3MF exporter with SEPARATE volumes — the Braille-as-own-part export.
+ *
+ * Writes one 3MF whose root object references every part as a <component>:
+ * slicers (PrusaSlicer / Bambu / Orca) import that as ONE object with
+ * separate volumes, so the Braille can be coloured (multi-material) or split
+ * off without having been fused into the base mesh.
+ *
+ * @param {Array<{name: string, positions: Float32Array}>} parts
+ *   non-indexed triangle soups, one volume each (first = base body)
+ * @param {string} [filename]
+ * @param {() => boolean} [shouldAbort]
+ * @returns {Promise<void>}
+ */
+export async function export3MFVolumes(parts, filename = 'textured.3mf', shouldAbort = () => false) {
+  if (shouldAbort()) throw new Error('Aborted');
+  if (!parts.length) throw new Error('No volumes to export');
+
+  const contentTypesXml =
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n' +
+    '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n' +
+    '</Types>\n';
+
+  const relsXml =
+    '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n' +
+    '<Relationship Id="rel-1" Target="/3D/3dmodel.model" ' +
+    'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n' +
+    '</Relationships>\n';
+
+  const blob = await zipChunks([
+    ['[Content_Types].xml', [strToU8(contentTypesXml)]],
+    ['_rels/.rels', [strToU8(relsXml)]],
+    ['3D/3dmodel.model', volumeModelChunks(parts)],
+  ], shouldAbort);
+  if (shouldAbort()) throw new Error('Aborted');
+  triggerDownload(blob, filename);
+}
+
+// XML chunks for the multi-volume model: root object id 1 with one component
+// per NON-EMPTY part; each part is its own mesh object (ids 2..n+1).
+function* volumeModelChunks(partsIn) {
+  const parts = partsIn.filter(p => (p.positions.length / 9 | 0) > 0);
+  const enc = new TextEncoder();
+  const threshold = 1 << 20;
+  const fmt = (n) => {
+    let s = n.toFixed(4);
+    if (s.indexOf('.') !== -1) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    return s;
+  };
+  let pending = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<model unit="millimeter" xml:lang="en-US" ' +
+    'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n' +
+    '<resources>\n' +
+    '<object id="1" type="model">';
+  for (let i = 0; i < parts.length; i++) pending += `<component objectid="${i + 2}"/>`;
+  pending += '</object>\n';
+  if (pending.length >= threshold) { yield enc.encode(pending); pending = ''; }
+
+  for (let p = 0; p < parts.length; p++) {
+    const { name, positions } = parts[p];
+    const triCount = (positions.length / 9) | 0;
+
+    // Same 1e4-grid vertex dedup as export3MF (round-trippable).
+    const indexMap  = new QuantizedPointMap(1e4, Math.min(triCount * 3, 1 << 22));
+    const uniqueXYZ = [];
+    const triIdx    = new Uint32Array(triCount * 3);
+    for (let i = 0; i < triCount; i++) {
+      for (let j = 0; j < 3; j++) {
+        const b = i * 9 + j * 3;
+        const x = positions[b], y = positions[b + 1], z = positions[b + 2];
+        const idx = indexMap.getOrSet(x, y, z, uniqueXYZ.length / 3);
+        if (indexMap.inserted) uniqueXYZ.push(x, y, z);
+        triIdx[i * 3 + j] = idx;
+      }
+    }
+
+    pending += `<object id="${p + 2}" type="model" name="${_xmlEscape(name)}">\n<mesh>\n<vertices>\n`;
+    for (let i = 0; i < uniqueXYZ.length; i += 3) {
+      pending += `<vertex x="${fmt(uniqueXYZ[i])}" y="${fmt(uniqueXYZ[i+1])}" z="${fmt(uniqueXYZ[i+2])}"/>\n`;
+      if (pending.length >= threshold) { yield enc.encode(pending); pending = ''; }
+    }
+    pending += '</vertices>\n<triangles>\n';
+    for (let i = 0; i < triIdx.length; i += 3) {
+      pending += `<triangle v1="${triIdx[i]}" v2="${triIdx[i+1]}" v3="${triIdx[i+2]}"/>\n`;
+      if (pending.length >= threshold) { yield enc.encode(pending); pending = ''; }
+    }
+    pending += '</triangles>\n</mesh>\n</object>\n';
+    if (pending.length >= threshold) { yield enc.encode(pending); pending = ''; }
+  }
+
+  pending += '</resources>\n<build>\n<item objectid="1"/>\n</build>\n</model>\n';
+  yield enc.encode(pending);
+}

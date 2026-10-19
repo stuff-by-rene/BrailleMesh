@@ -2657,3 +2657,334 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
   border-color: var(--accent);
   color: var(--text);
 }
+/* ── Mode switch (Texture / Braille) ─────────────────────────────────────── */
+
+.mode-seg {
+  display: flex;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px;
+  margin-right: 8px;
+}
+
+.mode-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 5px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mode-btn:hover { color: var(--text); }
+
+.mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Braille mode: the texture workflow's sections give way to the Braille area */
+body.braille-mode #settings-panel > .panel-section:not(#sec-load):not(#sec-braille):not(#sec-export):not(.license-link) {
+  display: none;
+}
+body.braille-mode #settings-panel > #sec-braille { display: block; }
+
+/* ── Braille panel ──────────────────────────────────────────────────────── */
+
+.braille-blurb {
+  font-size: 0.75rem;
+  opacity: 0.65;
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+
+.braille-add-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.braille-add-row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 0.85rem;
+}
+
+.braille-add-row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.braille-add-row select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 7px 4px;
+  font-size: 0.78rem;
+  max-width: 130px;
+}
+
+.braille-pool {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.braille-pool-empty {
+  font-size: 0.75rem;
+  opacity: 0.55;
+  margin: 2px 0 10px;
+}
+
+.braille-pool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.braille-pool-row:hover { border-color: var(--accent); }
+
+.braille-pool-row.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+
+.braille-pool-row.dragging { opacity: 0.45; }
+
+.braille-pool-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.braille-pool-count {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.braille-pool-count:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.braille-row-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.braille-row-btn:hover { color: var(--text); background: var(--border); }
+.braille-row-btn.danger:hover { color: var(--danger); }
+
+.braille-editor {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
+.braille-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.braille-editor-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.braille-placements {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+.braille-placement-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.braille-placement-row:hover { border-color: var(--accent); }
+.braille-placement-row.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+
+.braille-placement-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 1px 4px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.braille-placement-name:hover { border-color: var(--border); }
+
+.braille-placement-name:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.braille-placement-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.braille-placement-info {
+  font-size: 0.64rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.br-position-row { flex-wrap: wrap; row-gap: 4px; }
+
+.braille-position-side {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.br-pos-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.braille-pos-unit {
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Info icons (i) + shared bubble — parameter explanations on hover/click.
+   The icon is a CSS circle so it never depends on a font glyph; the labels
+   size to their content (the fixed 80px basis pushed long labels' trailing
+   info under the range input, which painted over it). */
+.braille-editor .form-row > label,
+.braille-editor .form-row > .form-row-label { flex: 0 0 auto; }
+
+.br-info {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+  user-select: none;
+}
+
+.br-info::before { content: 'i'; font-style: italic; line-height: 1; }
+
+.br-info:hover,
+.br-info.show { border-color: var(--accent); color: var(--accent); }
+
+.br-info-bubble {
+  position: fixed;
+  z-index: 1200;
+  max-width: 250px;
+  padding: 6px 9px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.braille-editor-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.braille-editor-actions .excl-tool-btn { font-size: 0.72rem; }
+
+.braille-hint {
+  font-size: 0.72rem;
+  color: var(--accent-hover);
+  margin: 4px 0 0;
+}
+
+/* Drop highlight while a pool block is dragged over the viewport */
+#drop-zone.braille-drag-over::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  pointer-events: none;
+}

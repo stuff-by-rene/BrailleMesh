@@ -132,6 +132,20 @@ export function applyTranslations() {
     el.title = t(el.dataset.i18nTitle);
   });
 
+  // info-bubble text: dataset.tip drives the JS bubble; aria-label keeps the
+  // text accessible without triggering the browser's native tooltip (which
+  // would overlap the bubble)
+  document.querySelectorAll('[data-i18n-tip]').forEach(el => {
+    const v = t(el.dataset.i18nTip);
+    el.dataset.tip = v;
+    el.setAttribute('aria-label', v);
+  });
+
+  // placeholder attribute
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  });
+
   // aria-label attribute
   document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
     el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel));

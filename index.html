@@ -7,26 +7,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BumpMesh by CNC Kitchen</title>
-  <meta name="description" content="BumpMesh by CNC Kitchen is a browser-based tool for adding displacement textures to STL, OBJ, and 3MF models locally, then exporting printable textured meshes." />
-  <link rel="canonical" href="https://bumpmesh.com/" />
+  <title>BrailleMesh</title>
+  <meta name="description" content="BrailleMesh is a browser-based tool for adding Braille reliefs and displacement textures to STL, OBJ, and 3MF models locally, then exporting printable meshes." />
+  <link rel="canonical" href="https://stuff-by-rene.github.io/BrailleMesh/" />
   <meta property="og:locale" content="en_US" />
   <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="BumpMesh" />
-  <meta property="og:title" content="BumpMesh by CNC Kitchen" />
-  <meta property="og:description" content="Add displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, bake, and export printable textured meshes locally." />
-  <meta property="og:url" content="https://bumpmesh.com/" />
-  <meta property="og:image" content="https://bumpmesh.com/assets/preview.jpg" />
-  <meta property="og:image:secure_url" content="https://bumpmesh.com/assets/preview.jpg" />
-  <meta property="og:image:type" content="image/jpeg" />
-  <meta property="og:image:width" content="2078" />
-  <meta property="og:image:height" content="1091" />
-  <meta property="og:image:alt" content="BumpMesh interface for previewing and exporting textured 3D models" />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="BumpMesh by CNC Kitchen" />
-  <meta name="twitter:description" content="Add displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, bake, and export printable textured meshes locally." />
-  <meta name="twitter:image" content="https://bumpmesh.com/assets/preview.jpg" />
-  <meta name="twitter:image:alt" content="BumpMesh interface for previewing and exporting textured 3D models" />
+  <meta property="og:site_name" content="BrailleMesh" />
+  <meta property="og:title" content="BrailleMesh" />
+  <meta property="og:description" content="Add Braille reliefs and displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, and export printable meshes locally." />
+  <meta property="og:url" content="https://stuff-by-rene.github.io/BrailleMesh/" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="BrailleMesh" />
+  <meta name="twitter:description" content="Add Braille reliefs and displacement textures to STL, OBJ, and 3MF models directly in your browser. Preview, mask, and export printable meshes locally." />
   <link rel="icon" type="image/png" href="logo.png" />
   <link rel="stylesheet" href="style.css" />
   <script>
@@ -51,13 +43,17 @@
   </script>
   <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js">
 </head>
-<body>
+<body class="braille-mode">
   <header>
     <div class="logo">
-      <img src="logo.png" alt="BumpMesh" width="24" height="24" />
-      <span>BumpMesh <span id="app-version" class="app-version"></span> <small style="opacity:.6;font-weight:400">by <a href="https://www.youtube.com/@CNCKitchen" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">CNC Kitchen</a></small></span>
+      <img src="logo.png" alt="BrailleMesh" width="24" height="24" />
+      <span>BrailleMesh <span id="app-version" class="app-version"></span></span>
     </div>
     <div class="header-actions">
+      <div class="mode-seg" role="tablist" aria-label="Mode">
+        <button id="mode-texture-btn" class="mode-btn" aria-pressed="false" data-i18n="mode.texture">Texture</button>
+        <button id="mode-braille-btn" class="mode-btn active" aria-pressed="true" data-i18n="mode.braille" data-i18n-title="mode.brailleTitle" title="Braille signage on the model — its own workspace">Braille</button>
+      </div>
       <div class="project-io">
         <button id="undo-btn" class="icon-btn" data-i18n-title="header.undo" title="Undo (Ctrl+Z)" disabled>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
@@ -195,7 +191,7 @@
     <aside id="settings-panel">
 
       <!-- Load STL -->
-      <section class="panel-section">
+      <section class="panel-section" id="sec-load">
         <div class="load-stl-row">
           <label class="upload-btn" for="stl-file-input" style="flex:1;justify-content:center;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
@@ -238,8 +234,168 @@
         <p style="margin:.4em 0 0;font-size:.75rem;opacity:.55;text-align:center;" data-i18n="ui.localProcessingNote">All processing runs locally in your browser — no data is uploaded.</p>
       </section>
 
+      <!-- Braille (own workspace, not part of the texture workflow) -->
+      <section class="panel-section" id="sec-braille">
+        <h2 data-i18n="sections.braille">Braille</h2>
+        <p class="braille-blurb" data-i18n="braille.blurb">Create text blocks, drop them onto a face of the model and fine-tune each block with its own parameters. Export keeps the Braille as a separate, colourable part.</p>
+
+        <div class="braille-add-row">
+          <input type="text" id="braille-text-input" data-i18n-placeholder="braille.textPlaceholder" placeholder="Text…" />
+          <select id="braille-lang-select" data-i18n-title="braille.languageTitle" title="Braille system"></select>
+          <button id="braille-add-btn" class="upload-btn" data-i18n="braille.add" data-i18n-title="braille.addTitle" title="Add the text to the pool">Add</button>
+        </div>
+
+        <div id="braille-pool" class="braille-pool"></div>
+        <p id="braille-pool-empty" class="braille-pool-empty" data-i18n="braille.poolEmpty">No blocks yet — type a word above and click Add.</p>
+
+        <div id="braille-editor" class="braille-editor hidden">
+          <div class="braille-editor-head">
+            <span id="braille-editor-title" class="braille-editor-title"></span>
+            <button id="braille-place-btn" class="excl-tool-btn" aria-pressed="false" data-i18n="braille.place" data-i18n-title="braille.placeTitle" title="Click a face of the model to place this block there">Place on model</button>
+          </div>
+
+          <div class="form-row">
+            <label for="braille-edit-text" data-i18n="braille.textLabel">Text</label>
+            <input type="text" id="braille-edit-text" />
+          </div>
+          <div class="form-row">
+            <label for="braille-edit-lang" data-i18n="braille.language">Braille system</label>
+            <select id="braille-edit-lang"></select>
+          </div>
+
+          <div class="form-row">
+            <span class="form-row-label" data-i18n="braille.modeLabel">Insert as</span>
+            <div class="excl-seg" role="group" aria-labelledby="braille-mode-label">
+              <button id="braille-mode-raised" class="excl-seg-btn" aria-pressed="false" data-i18n="braille.modeRaised" data-i18n-title="braille.modeRaisedTitle" title="Dots stand proud of the surface">On the mesh</button>
+              <button id="braille-mode-recessed" class="excl-seg-btn" aria-pressed="false" data-i18n="braille.modeRecessed" data-i18n-title="braille.modeRecessedTitle" title="One recessed frame around the block; dot tops flush with the surface">Embedded</button>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label for="braille-align-select" data-i18n="braille.align">Alignment</label>
+            <select id="braille-align-select">
+              <option value="center" data-i18n="braille.alignCenter">Centred</option>
+              <option value="left" data-i18n="braille.alignLeft">Left-aligned</option>
+            </select>
+          </div>
+
+          <div class="form-row slider-row">
+            <label for="br-dot-diameter" data-i18n="braille.dotDiameter">Dot diameter (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.dotDiameter"></span>
+            <input type="range" id="br-dot-diameter" min="1" max="3" step="0.05" value="1.6" />
+            <input type="number" class="val" id="br-dot-diameter-val" value="1.6" min="1" max="3" step="0.05" data-wheel-decimals="2" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="br-dot-spacing" data-i18n="braille.dotSpacing">Dot spacing (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.dotSpacing"></span>
+            <input type="range" id="br-dot-spacing" min="1.5" max="4" step="0.05" value="2.5" />
+            <input type="number" class="val" id="br-dot-spacing-val" value="2.5" min="1.5" max="4" step="0.05" data-wheel-decimals="2" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="br-cell-spacing" data-i18n="braille.cellSpacing">Cell spacing (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.cellSpacing"></span>
+            <input type="range" id="br-cell-spacing" min="3" max="10" step="0.1" value="6" />
+            <input type="number" class="val" id="br-cell-spacing-val" value="6" min="3" max="10" step="0.1" data-wheel-decimals="1" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="br-word-spacing" data-i18n="braille.wordSpacing">Word spacing (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.wordSpacing"></span>
+            <input type="range" id="br-word-spacing" min="2" max="15" step="0.1" value="8" />
+            <input type="number" class="val" id="br-word-spacing-val" value="8" min="2" max="15" step="0.1" data-wheel-decimals="1" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="br-row-spacing" data-i18n="braille.rowSpacing">Row spacing (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.rowSpacing"></span>
+            <input type="range" id="br-row-spacing" min="4" max="20" step="0.1" value="10" />
+            <input type="number" class="val" id="br-row-spacing-val" value="10" min="4" max="20" step="0.1" data-wheel-decimals="1" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="br-dot-height" data-i18n="braille.dotHeight">Dot height (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.dotHeight"></span>
+            <input type="range" id="br-dot-height" min="0.2" max="1.2" step="0.05" value="0.5" />
+            <input type="number" class="val" id="br-dot-height-val" value="0.5" min="0.2" max="1.2" step="0.05" data-wheel-decimals="2" />
+          </div>
+          <div class="form-row slider-row">
+            <label for="br-dot-rounding" data-i18n="braille.dotRounding">Dot rounding (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.dotRounding"></span>
+            <input type="range" id="br-dot-rounding" min="0" max="1.5" step="0.05" value="0.75" />
+            <input type="number" class="val" id="br-dot-rounding-val" value="0.75" min="0" max="1.5" step="0.05" data-wheel-decimals="2" />
+          </div>
+          <div class="form-row slider-row" id="br-recess-margin-row">
+            <label for="br-recess-margin" data-i18n="braille.recessMargin">Pocket margin (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.recessMargin"></span>
+            <input type="range" id="br-recess-margin" min="1" max="6" step="0.1" value="3" />
+            <input type="number" class="val" id="br-recess-margin-val" value="3" min="1" max="6" step="0.1" data-wheel-decimals="1" />
+          </div>
+          <div class="form-row slider-row" id="br-recess-depth-row">
+            <label for="br-recess-depth" data-i18n="braille.recessDepth">Pocket depth (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.recessDepth"></span>
+            <input type="range" id="br-recess-depth" min="0.1" max="1.5" step="0.05" value="0.5" />
+            <input type="number" class="val" id="br-recess-depth-val" value="0.5" min="0.1" max="1.5" step="0.05" data-wheel-decimals="2" />
+          </div>
+
+          <div class="form-row">
+            <label class="checkbox-label" for="br-black-show">
+              <input type="checkbox" id="br-black-show" />
+              <span data-i18n="braille.blackShow">Black-print caption</span>
+            </label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.blackShow"></span>
+          </div>
+          <div id="br-black-rows" class="hidden">
+            <div class="form-row slider-row">
+              <label for="br-black-size" data-i18n="braille.blackSize">Caption size (mm)</label>
+              <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.blackSize"></span>
+              <input type="range" id="br-black-size" min="2" max="10" step="0.1" value="4" />
+              <input type="number" class="val" id="br-black-size-val" value="4" min="2" max="10" step="0.1" data-wheel-decimals="1" />
+            </div>
+            <div class="form-row slider-row">
+              <label for="br-black-depth" data-i18n="braille.blackDepth">Caption depth (mm)</label>
+              <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.blackDepth"></span>
+              <input type="range" id="br-black-depth" min="0.1" max="1" step="0.05" value="0.4" />
+              <input type="number" class="val" id="br-black-depth-val" value="0.4" min="0.1" max="1" step="0.05" data-wheel-decimals="2" />
+            </div>
+            <div class="form-row">
+              <span class="form-row-label" data-i18n="braille.blackRelief">Caption relief</span>
+              <div class="excl-seg" role="group">
+                <button id="br-black-engrave" class="excl-seg-btn active" aria-pressed="true" data-i18n="braille.blackEngrave">Engraved</button>
+                <button id="br-black-emboss" class="excl-seg-btn" aria-pressed="false" data-i18n="braille.blackEmboss">Embossed</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-row slider-row hidden" id="br-rotation-row">
+            <label for="br-rotation" data-i18n="braille.rotation">Rotation (°)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.rotation"></span>
+            <input type="range" id="br-rotation" min="-180" max="180" step="1" value="0" />
+            <input type="number" class="val" id="br-rotation-val" value="0" min="-180" max="180" step="1" />
+          </div>
+
+          <div class="form-row slider-row br-position-row hidden" id="br-position-row">
+            <label data-i18n="braille.position">Position</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.position"></span>
+            <span id="br-position-side" class="braille-position-side"></span>
+            <span class="br-pos-field">
+              <input type="number" class="val" id="br-pos-left" step="0.5" />
+              <span class="braille-pos-unit" data-i18n="braille.posFromLeft">mm von links</span>
+            </span>
+            <span class="br-pos-field">
+              <input type="number" class="val" id="br-pos-bottom" step="0.5" />
+              <span class="braille-pos-unit" data-i18n="braille.posFromBottom">mm von unten</span>
+            </span>
+          </div>
+
+          <div id="braille-placements" class="braille-placements"></div>
+
+          <div class="braille-editor-actions">
+            <button id="braille-reset-btn" class="excl-tool-btn" data-i18n="braille.resetParams" data-i18n-title="braille.resetParamsTitle" title="Reset all parameters of this block to the defaults (text and placements are kept)">Reset parameters</button>
+            <button id="braille-localize-btn" class="excl-tool-btn" data-i18n="braille.localize" data-i18n-title="braille.localizeTitle" title="Save the current parameter values as a NEW pool block and move only the selected placement to it">Local change → new block</button>
+            <button id="braille-delete-block-btn" class="excl-tool-btn" data-i18n="braille.deleteBlock" data-i18n-title="braille.deleteBlockTitle" title="Remove this block and all of its placements">Delete block</button>
+          </div>
+        </div>
+      </section>
+
       <!-- Displacement Map -->
-      <section class="panel-section">
+      <section class="panel-section" id="sec-map">
         <h2 data-i18n="sections.displacementMap">Displacement Map</h2>
 
         <!-- Texture layers: every layer has its own texture, projection/displacement settings and
@@ -293,7 +449,7 @@
       </section>
 
       <!-- Projection -->
-      <section class="panel-section">
+      <section class="panel-section" id="sec-projection">
         <h2 data-i18n="sections.projection">Projection</h2>
         <div class="form-row">
           <label for="mapping-mode" data-i18n="labels.mode">Mode</label>
@@ -346,7 +502,7 @@
       </section>
 
       <!-- Displacement -->
-      <section class="panel-section">
+      <section class="panel-section" id="sec-displacement">
         <h2 data-i18n="sections.displacement">Displacement</h2>
         <div class="form-row slider-row">
           <label for="amplitude" data-i18n="labels.textureHeight">Texture height (mm)</label>
@@ -384,7 +540,7 @@
       </section>
 
       <!-- Transform -->
-      <section class="panel-section">
+      <section class="panel-section" id="sec-transform">
         <h2 data-i18n="sections.transform">Transform</h2>
         <p class="advanced-blurb" data-i18n="labels.scaleManualHint">Type a value in the box for smaller or larger sizes</p>
 
@@ -427,7 +583,7 @@
       </section>
 
       <!-- Masking -->
-      <section class="panel-section">
+      <section class="panel-section" id="sec-masking">
         <h2 data-i18n="sections.masking">Masking</h2>
 
         <!-- By Angle -->
@@ -631,7 +787,7 @@
       </section>
 
       <!-- Export -->
-      <section class="panel-section">
+      <section class="panel-section" id="sec-export">
         <h2 data-i18n="sections.export" data-i18n-title="tooltips.export" title="Smaller edge length = finer displacement detail. Output is then decimated to the triangle limit.">Export ⓘ</h2>
         <button id="smart-res-btn" class="smart-res-btn" disabled
                 data-i18n="labels.smartRes"
@@ -671,6 +827,7 @@
         <div class="export-buttons">
           <button id="export-btn" class="export-btn" disabled data-i18n="ui.exportStl" data-i18n-title="tooltips.exportStl" title="Widely compatible with all slicers">Export STL</button>
           <button id="export-3mf-btn" class="export-btn" disabled data-i18n="ui.export3mf" data-i18n-title="tooltips.export3mf" title="Smaller file size — may not be accepted by all slicers">Export 3MF</button>
+          <button id="export-3mf-part-btn" class="export-btn hidden" disabled data-i18n="ui.export3mfPart" data-i18n-title="tooltips.export3mfPart" title="Base body and Braille as separate volumes in one 3MF — colour or split them in the slicer">Export 3MF (Braille as part)</button>
         </div>
       </section>
 
@@ -704,7 +861,7 @@
         </span>
       </div>
       <div id="gallery-body" class="gallery-body"></div>
-      <p class="gallery-credits" data-i18n-html="gallery.credits">Patterns marked <strong>HP</strong> are based on <a href="https://heropatterns.com/" target="_blank" rel="noopener">Hero Patterns</a> by Steve Schoger, licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a> and converted to heightmaps. Textures marked <strong>CC0</strong> come from <a href="https://ambientcg.com/" target="_blank" rel="noopener">ambientCG</a> and <a href="https://polyhaven.com/" target="_blank" rel="noopener">Poly Haven</a> (public domain). Textures marked <strong>FF</strong> were made with <a href="https://www.filterforge.com/" target="_blank" rel="noopener">Filter Forge</a>. All other textures ship with BumpMesh.</p>
+      <p class="gallery-credits" data-i18n-html="gallery.credits">Patterns marked <strong>HP</strong> are based on <a href="https://heropatterns.com/" target="_blank" rel="noopener">Hero Patterns</a> by Steve Schoger, licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a> and converted to heightmaps. Textures marked <strong>CC0</strong> come from <a href="https://ambientcg.com/" target="_blank" rel="noopener">ambientCG</a> and <a href="https://polyhaven.com/" target="_blank" rel="noopener">Poly Haven</a> (public domain). Textures marked <strong>FF</strong> were made with <a href="https://www.filterforge.com/" target="_blank" rel="noopener">Filter Forge</a>. All other textures ship with BrailleMesh.</p>
     </aside>
   </main>
 
@@ -809,7 +966,7 @@
   <div id="welcome-overlay" class="welcome-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
     <div class="welcome-modal">
       <button id="welcome-close" class="license-close-btn" aria-label="Close">&#215;</button>
-      <h2 id="welcome-title">Welcome to BumpMesh</h2>
+      <h2 id="welcome-title">Welcome to BrailleMesh</h2>
       <p class="welcome-tagline">Add a texture to any of your STLs &mdash; directly in your browser, no cloud and completely free!</p>
 
       <h3 class="welcome-heading">Quick start</h3>

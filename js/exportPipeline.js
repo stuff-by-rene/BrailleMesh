@@ -317,14 +317,23 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     // the subdivided mesh is freed. Displacement keeps triangle count and
     // order, so the mask indexes the displaced mesh 1:1 and lets decimation
     // lock those faces in place.
+    // Braille block faces are locked too — decimation would collapse the
+    // dots it exists to preserve.
     let lockedFaces = null;
-    if (settings.preserveUntextured) {
+    const blockLayers = Array.isArray(input.layers)
+      ? input.layers.filter(L => L?.settings?.block && L.hardFaces) : [];
+    if (settings.preserveUntextured || blockLayers.length) {
       const ew = subdivided.attributes.excludeWeight;
+      const triN = subdivided.attributes.position.count / 3;
+      lockedFaces = new Uint8Array(triN);
       if (ew) {
-        const triN = subdivided.attributes.position.count / 3;
-        lockedFaces = new Uint8Array(triN);
         for (let t = 0; t < triN; t++) {
           if (ew.array[t * 3] > 0.99) lockedFaces[t] = 1;
+        }
+      }
+      for (const L of blockLayers) {
+        for (let t = 0; t < triN; t++) {
+          if (!L.hardFaces[t]) lockedFaces[t] = 1;
         }
       }
     }

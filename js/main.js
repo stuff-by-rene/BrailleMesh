@@ -25,7 +25,7 @@ import { createPreviewMaterial, updateMaterial, MAX_LAYERS } from './previewMate
 import { subdivide }          from './subdivision.js';
 import { runExportPipeline }  from './exportPipeline.js';
 import { runPreviewPipeline, computeFaceNormals } from './previewPipeline.js';
-import { exportSTL, export3MF } from './exporter.js';
+import { exportSTL, export3MF, export3MFVolumes } from './exporter.js';
 import { buildAdjacency, bucketFill,
          buildExclusionOverlayGeo, buildFaceWeights } from './exclusion.js';
 import { buildSoftExclusion, softPaintedFaces } from './softMask.js';
@@ -36,6 +36,9 @@ import { t, tHtml, initLang, setLang, getLang, applyTranslations, TRANSLATIONS }
 import { getScaleReferenceLengths } from './mapping.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
+import { generateBrailleMap, BRAILLE_DEFAULTS, BRAILLE_LANGUAGES } from './braille.js';
+import { blockDescriptor, blockFrame, blockToPipelineLayer, packBlockAtlas, MAX_PREVIEW_BLOCKS } from './brailleBlocks.js';
+import { buildBrailleSolid } from './brailleSolid.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -192,6 +195,22 @@ let layers = [];        // layer records, composition order (first = bottom); se
 let activeLayer = 0;    // index into `layers` of the layer the sidebar edits
 let _layerSeq = 0;
 layers = [_newLayer()];
+
+// ── Braille blocks (own workspace, see js/braille*.js) ──────────────────────
+// A POOL BLOCK holds text + parameters + the generated depth map; every
+// PLACEMENT pins it to one face (centre / normal / rotation). All placements
+// of a block share its parameters; a "local change" detaches one placement
+// into a new pool block.
+let brailleMode = true;            // Braille workspace active (mode switch) — Braille is the default workspace
+let braillePool = [];              // [{ id, label, text, params, placements }]
+let brailleActiveBlock = -1;       // index into braillePool the editor shows
+let brailleActivePlacement = -1;   // index into the active block's placements
+let _brailleSeq = 0;
+let _brailleMapCache = new Map();  // mapKey → generateBrailleMap result
+let _blockAtlas = null;            // { texture, rects, sig } for the preview shader
+let braillePlaceActive = false;    // "Place on model" click mode
+let _brailleMoveDrag = null;       // { blockIdx, plIdx } while dragging a placement
+let _brailleCamAnim = 0;           // camera-swing animation frame handle
 
 // ── Canvas filter support (Safari / iOS WebView don't support ctx.filter) ────
 const CANVAS_FILTER_SUPPORTED = 'filter' in CanvasRenderingContext2D.prototype;
@@ -449,6 +468,53 @@ const exclHint            = document.getElementById('excl-hint');
 const layerList   = document.getElementById('layer-list');
 const layerAddBtn = document.getElementById('layer-add-btn');
 let _layerStripSig = '';
+
+// ── Braille DOM refs ──────────────────────────────────────────────────────
+const modeTextureBtn       = document.getElementById('mode-texture-btn');
+const modeBrailleBtn       = document.getElementById('mode-braille-btn');
+const brailleSection       = document.getElementById('sec-braille');
+const brailleTextInput     = document.getElementById('braille-text-input');
+const brailleLangSelect    = document.getElementById('braille-lang-select');
+const brailleAddBtn        = document.getElementById('braille-add-btn');
+const braillePoolEl        = document.getElementById('braille-pool');
+const braillePoolEmptyEl   = document.getElementById('braille-pool-empty');
+const brailleEditorEl      = document.getElementById('braille-editor');
+const brailleEditorTitleEl = document.getElementById('braille-editor-title');
+const brailleEditText      = document.getElementById('braille-edit-text');
+const brailleEditLang      = document.getElementById('braille-edit-lang');
+const braillePlaceBtn      = document.getElementById('braille-place-btn');
+const brailleModeRaisedBtn = document.getElementById('braille-mode-raised');
+const brailleModeRecessedBtn = document.getElementById('braille-mode-recessed');
+const brailleAlignSelect   = document.getElementById('braille-align-select');
+const brailleBlackShowChk  = document.getElementById('br-black-show');
+const brailleBlackRows     = document.getElementById('br-black-rows');
+const brailleBlackEngraveBtn = document.getElementById('br-black-engrave');
+const brailleBlackEmbossBtn  = document.getElementById('br-black-emboss');
+const brRotationRow        = document.getElementById('br-rotation-row');
+const brRotationSlider     = document.getElementById('br-rotation');
+const brRotationVal        = document.getElementById('br-rotation-val');
+const brPositionRow        = document.getElementById('br-position-row');
+const brPositionSideEl     = document.getElementById('br-position-side');
+const brPosLeft            = document.getElementById('br-pos-left');
+const brPosBottom          = document.getElementById('br-pos-bottom');
+const braillePlacementsEl  = document.getElementById('braille-placements');
+const brailleLocalizeBtn   = document.getElementById('braille-localize-btn');
+const brailleResetBtn      = document.getElementById('braille-reset-btn');
+const brailleDeleteBlockBtn = document.getElementById('braille-delete-block-btn');
+const export3mfPartBtn     = document.getElementById('export-3mf-part-btn');
+const recessMarginRow      = document.getElementById('br-recess-margin-row');
+const recessDepthRow       = document.getElementById('br-recess-depth-row');
+// Per-block parameter sliders: id pattern br-<key> / br-<key>-val.
+const BR_PARAM_KEYS = ['dotDiameter', 'dotSpacing', 'cellSpacing', 'wordSpacing', 'rowSpacing',
+                       'dotHeight', 'dotRounding', 'recessMargin', 'recessDepth',
+                       'blackSize', 'blackDepth'];
+const brSliders = {};
+for (const k of BR_PARAM_KEYS) {
+  brSliders[k] = {
+    slider: document.getElementById('br-' + k.replace(/([A-Z])/g, '-$1').toLowerCase()),
+    val:    document.getElementById('br-' + k.replace(/([A-Z])/g, '-$1').toLowerCase() + '-val'),
+  };
+}
 
 // ── Mesh diagnostics DOM refs ────────────────────────────────────────────────
 const meshDiagnostics    = document.getElementById('mesh-diagnostics');
@@ -1451,15 +1517,44 @@ function wireEvents() {
     handleModelFile(file);
   });
 
-  // Drag & drop on the viewport section
+  // Drag & drop on the viewport section — a Braille pool block dropped onto
+  // the model places it at the drop point; anything else is a model file.
   dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     dropZone.classList.add('drag-over');
+    if (brailleMode && [...(e.dataTransfer?.types ?? [])].includes('text/bumpmesh-braille')) {
+      dropZone.classList.add('braille-drag-over');
+    }
   });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+    dropZone.classList.remove('braille-drag-over');
+  });
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
+    dropZone.classList.remove('braille-drag-over');
+    // Braille block from the pool → place it at the drop point.
+    const brailleId = e.dataTransfer.getData('text/bumpmesh-braille');
+    if (brailleId !== '' && currentGeometry) {
+      const idx = braillePool.findIndex(B => String(B.id) === brailleId);
+      if (idx >= 0) {
+        if (settings.useDisplacement) {
+          settings.useDisplacement = false;
+          dispPreviewToggle.checked = false;
+          toggleDisplacementPreview(false);
+        }
+        brailleActiveBlock = idx;
+        brailleActivePlacement = -1;
+        const mesh = getCurrentMesh();
+        _raycaster.setFromCamera(_canvasNDC(e), getCamera());
+        const hit = mesh ? getFrontFaceHit(_raycaster.intersectObject(mesh), mesh) : null;
+        if (hit) _placeBrailleAtHit(hit);
+        _renderBraillePool();
+        _renderBrailleEditor();
+      }
+      return;
+    }
     const files = [...e.dataTransfer.files];
     const bmFile = files.find(f => /\.bumpmesh$/i.test(f.name));
     if (bmFile) { importProject(bmFile).catch(err => alert(t('alerts.importFailed', { msg: err.message }))); return; }
@@ -1986,6 +2081,129 @@ function wireEvents() {
     if (!exclusionTool) setExclusionTool('bucket');
   });
 
+  // ── Braille workspace ────────────────────────────────────────────────────
+  _populateBrailleLangSelects();
+  modeTextureBtn.addEventListener('click', () => setBrailleMode(false));
+  modeBrailleBtn.addEventListener('click', () => setBrailleMode(true));
+  brailleAddBtn.addEventListener('click', _addBrailleBlock);
+  brailleTextInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); _addBrailleBlock(); }
+  });
+  // Pool + placement rows: DELEGATED on the containers. Rows are rebuilt on
+  // nearly every state change (e.g. the editor text field's blur-'change'
+  // re-renders the pool mid-click) — per-row listeners would be destroyed
+  // between mousedown and mouseup and swallow the click.
+  braillePoolEl?.addEventListener('click', (e) => {
+    const row = e.target.closest('.braille-pool-row');
+    if (!row || !braillePoolEl.contains(row)) return;
+    const i = braillePool.findIndex(B => String(B.id) === row.dataset.blockId);
+    if (i < 0) return;
+    if (e.target.closest('.braille-row-btn')) { _deleteBrailleBlock(i); return; }
+    const toPlacements = !!e.target.closest('.braille-pool-count');
+    _selectBrailleBlock(i);
+    if (toPlacements) _scrollToBraillePlacements();
+  });
+  braillePoolEl?.addEventListener('dragstart', (e) => {
+    const row = e.target.closest('.braille-pool-row');
+    if (!row) return;
+    e.dataTransfer.setData('text/bumpmesh-braille', row.dataset.blockId);
+    e.dataTransfer.effectAllowed = 'copy';
+    row.classList.add('dragging');
+  });
+  braillePoolEl?.addEventListener('dragend', (e) => {
+    e.target.closest('.braille-pool-row')?.classList.remove('dragging');
+  });
+  braillePlacementsEl?.addEventListener('click', (e) => {
+    const row = e.target.closest('.braille-placement-row');
+    if (!row || !braillePlacementsEl.contains(row)) return;
+    const pi = parseInt(row.dataset.plIdx, 10);
+    const B = braillePool[brailleActiveBlock];
+    if (!B || !(pi >= 0 && pi < B.placements.length)) return;
+    if (e.target.closest('.braille-row-btn')) { _deleteBraillePlacement(pi); return; }
+    if (e.target.closest('.braille-placement-name')) {
+      // Quiet select while renaming: highlight + rotation/position rows, keep focus.
+      brailleActivePlacement = pi;
+      braillePlacementsEl.querySelectorAll('.braille-placement-row').forEach(r =>
+        r.classList.toggle('active', parseInt(r.dataset.plIdx, 10) === pi));
+      _syncBraillePlacementEditor(B, B.placements[pi]);
+      _autoSaveSettings();
+      return;
+    }
+    _selectBraillePlacement(pi);
+  });
+  brailleEditText.addEventListener('change', () => _setBrailleBlockText(brailleEditText.value));
+  brailleEditLang.addEventListener('change', () => _setBrailleLanguage(brailleEditLang.value));
+  brailleAlignSelect.addEventListener('change', () => _setBrailleParam('align', brailleAlignSelect.value));
+  brailleModeRaisedBtn.addEventListener('click', () => _setBrailleBlockMode('raised'));
+  brailleModeRecessedBtn.addEventListener('click', () => _setBrailleBlockMode('recessed'));
+  brailleBlackShowChk.addEventListener('change', () => {
+    _setBrailleParam('blackShow', brailleBlackShowChk.checked);
+    _renderBrailleEditor();
+  });
+  brailleBlackEngraveBtn.addEventListener('click', () => _setBrailleBlackRelief('engrave'));
+  brailleBlackEmbossBtn.addEventListener('click', () => _setBrailleBlackRelief('emboss'));
+  braillePlaceBtn.addEventListener('click', () => _toggleBraillePlace(!braillePlaceActive));
+  brailleLocalizeBtn.addEventListener('click', _localizeBrailleBlock);
+  brailleResetBtn?.addEventListener('click', _resetBrailleParams);
+  brailleDeleteBlockBtn.addEventListener('click', () => _deleteBrailleBlock(brailleActiveBlock));
+
+  // Info bubbles (i): one shared element, positioned near the icon (fixed →
+  // the sidebar's overflow cannot clip it). Hover shows, clicking pins it
+  // until the next click elsewhere or Escape.
+  const _infoBubble = document.createElement('div');
+  _infoBubble.className = 'br-info-bubble';
+  _infoBubble.hidden = true;
+  document.body.appendChild(_infoBubble);
+  const _hideInfoBubble = () => { _infoBubble.hidden = true; };
+  const _showInfoBubble = (el) => {
+    const text = el.dataset.tip || el.title;
+    if (!text) return;
+    _infoBubble.textContent = text;
+    _infoBubble.hidden = false;
+    const r = el.getBoundingClientRect();
+    _infoBubble.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - 262))}px`;
+    _infoBubble.style.top = `${Math.min(r.bottom + 6, window.innerHeight - 48)}px`;
+  };
+  document.addEventListener('mouseover', (e) => {
+    const el = e.target.closest?.('.br-info');
+    if (el) _showInfoBubble(el); else _hideInfoBubble();
+  });
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest?.('.br-info');
+    if (el) { e.preventDefault(); _showInfoBubble(el); } else _hideInfoBubble();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') _hideInfoBubble(); });
+  export3mfPartBtn.addEventListener('click', () => handleExport3MFPart());
+  // Per-block parameter sliders — the classic BumpMesh slider design, writing
+  // into the active block's own parameter set.
+  const BR_DECIMALS = {
+    dotDiameter: 2, dotSpacing: 2, cellSpacing: 1, wordSpacing: 1, rowSpacing: 1,
+    dotHeight: 2, dotRounding: 2, recessMargin: 1, recessDepth: 2,
+    blackSize: 1, blackDepth: 2,
+  };
+  for (const k of BR_PARAM_KEYS) {
+    const { slider, val } = brSliders[k];
+    if (!slider || !val) continue;
+    linkSlider(slider, val, v => { _setBrailleParam(k, v); return v.toFixed(BR_DECIMALS[k] ?? 2); });
+  }
+  linkSlider(brRotationSlider, brRotationVal, v => _setBraillePlacementRotation(v));
+
+  // Placement position: distances (mm) from the face's left/bottom edges.
+  const _applyBraillePos = () => {
+    const B = braillePool[brailleActiveBlock];
+    const pl = B?.placements[brailleActivePlacement];
+    if (!pl) return;
+    const left = parseFloat(brPosLeft.value), bottom = parseFloat(brPosBottom.value);
+    if (isNaN(left) || isNaN(bottom)) return;
+    _moveBraillePlacement(B, pl, left, bottom);
+    _renderBrailleEditor();
+    updatePreview();
+    _autoSaveSettings();
+    _commitUndoCapture();
+  };
+  brPosLeft?.addEventListener('change', _applyBraillePos);
+  brPosBottom?.addEventListener('change', _applyBraillePos);
+
   // ── Canvas mouse events for exclusion painting ────────────────────────────
   canvas.addEventListener('mousedown', (e) => {
     if (!currentGeometry || e.button !== 0) return;
@@ -1998,6 +2216,28 @@ function wireEvents() {
       e.preventDefault();
       handlePlaceOnFaceClick(e);
       return;
+    }
+
+    // Braille: grab a placed block to move it, or place a new copy while
+    // place mode is on. Everything else stays with OrbitControls.
+    if (brailleMode) {
+      const grab = _braillePlacementUnderCursor(e);
+      if (grab) {
+        e.preventDefault();
+        brailleActiveBlock = grab.blockIdx;
+        brailleActivePlacement = grab.plIdx;
+        _brailleMoveDrag = { blockIdx: grab.blockIdx, plIdx: grab.plIdx };
+        getControls().enabled = false;
+        _toggleBraillePlace(false);
+        _renderBraillePool();
+        _renderBrailleEditor();
+        return;
+      }
+      if (braillePlaceActive) {
+        e.preventDefault();
+        handleBraillePlaceClick(e);
+        return;
+      }
     }
 
     if (!exclusionTool || !paintTree) return;
@@ -2036,6 +2276,8 @@ function wireEvents() {
   let _hoverRafId = 0;
 
   canvas.addEventListener('mousemove', (e) => {
+    // Braille move drag: the grabbed placement follows the cursor's face hit.
+    if (_brailleMoveDrag) { _brailleMoveToCursor(e); return; }
     // Paint-Events sofort verarbeiten (jeder Event zaehlt fuer lueckenloses Malen)
     if (isPainting && exclusionTool === 'brush') {
       paintAt(e);
@@ -2077,6 +2319,16 @@ function wireEvents() {
   });
 
   document.addEventListener('mouseup', () => {
+    if (_brailleMoveDrag) {
+      _brailleMoveDrag = null;
+      getControls().enabled = true;
+      setSectionHandlesLocked(braillePlaceActive);
+      _renderBrailleEditor();   // refresh the placement's location info
+      updatePreview();
+      _autoSaveSettings();
+      _commitUndoCapture();
+      return;
+    }
     if (!isPainting) return;
     isPainting = false;
     _strokeLastPoint = null;
@@ -2093,6 +2345,7 @@ function wireEvents() {
     if (e.key === 'Escape') {
       if (rotateActive) toggleRotateMode(false);
       if (placeOnFaceActive) togglePlaceOnFace(false);
+      if (braillePlaceActive) _toggleBraillePlace(false);
       if (exclusionTool) setExclusionTool(null);
       licenseOverlay.classList.add('hidden');
       imprintOverlay.classList.add('hidden');
@@ -2743,7 +2996,7 @@ function _unionFaceWeights(hardFlags, geometry, withAngle) {
  * path unchanged; anything else becomes the layered path (exportPipeline.js
  * `layers`).
  */
-function _pipelineInputs() {
+function _pipelineInputs({ baseOnly = false } = {}) {
   const parts = [];
   for (let i = 0; i < layers.length; i++) {
     const L = layers[i];
@@ -2760,7 +3013,11 @@ function _pipelineInputs() {
   const positions = split ? paintFlat.positions : currentGeometry.attributes.position.array;
   const geometry = split ? paintGeometry : currentGeometry;
 
-  if (!split && parts.length === 1 && parts[0].isActive) {
+  // Braille block placements ride along as pseudo-layers (one per placement).
+  const blockLayers = _blockPipelineLayers(positions, { baseOnly });
+  const blockHard = blockLayers.map(l => l.hardFaces);
+
+  if (!split && parts.length === 1 && !blockLayers.length && parts[0].isActive) {
     // Legacy inputs from the root paint: hard faces as the excluded set, soft
     // coverage on the welded base vertices.
     const tl = paintTree ? paintTree.layers[_activeSlot()] : null;
@@ -2801,12 +3058,16 @@ function _pipelineInputs() {
       blendAdd: L !== layers[0] && L.blendAdd,
     });
   }
+  out.push(...blockLayers);
+  hardFlags.push(...blockHard);
   const faceWeights = _unionFaceWeights(hardFlags, geometry, true);
   return {
     positions, faceWeights, softExclude: null,
     imageData: null, imgWidth: 0, imgHeight: 0,
     layers: out,
-    label: parts.length ? (parts.length === 1 ? _mapLabel(parts[0].entry) : `${parts.length}layers`) : 'layers',
+    label: parts.length
+      ? (parts.length === 1 ? _mapLabel(parts[0].entry) : `${parts.length}layers`)
+      : (blockLayers.length ? 'braille' : 'layers'),
   };
 }
 
@@ -2902,6 +3163,832 @@ function _renderLayerStrip() {
     const full = layers.length >= MAX_LAYERS;
     layerAddBtn.disabled = full;
     layerAddBtn.title = full ? t('layers.max', { n: MAX_LAYERS }) : t('layers.addTitle');
+  }
+}
+
+// ── Braille blocks: pool, placements, editor ────────────────────────────────
+
+/** Parameter part of the map cache key (everything EXCEPT the text). */
+function _brailleMapKey(p) {
+  return ['language', 'dots8', 'mode', 'dotDiameter', 'dotSpacing', 'cellSpacing',
+          'wordSpacing', 'rowSpacing', 'dotHeight', 'dotRounding', 'recessMargin',
+          'recessDepth', 'align', 'blackShow', 'blackSize', 'blackDepth',
+          'blackGap', 'blackRelief', 'blackFont', 'pxPerMm']
+    .map(k => `${k}=${p[k]}`).join('|');
+}
+
+/** Cache key of everything a block's depth map depends on — params AND text.
+ *  The text MUST be part of the key: two blocks with identical params but
+ *  different text otherwise share one cache entry and the model renders the
+ *  first block's braille for both. */
+function _brailleBlockKey(B, pocketsOnly = false) {
+  return _brailleMapKey(B.params) + '|t=' + B.text + (pocketsOnly ? '+po' : '');
+}
+
+/** The block's depth map, regenerated from params or text when they changed. */
+function _brailleMapFor(B, pocketsOnly = false) {
+  const key = _brailleBlockKey(B, pocketsOnly);
+  let map = _brailleMapCache.get(key);
+  if (!map) {
+    map = generateBrailleMap({ ...B.params, text: B.text, pocketsOnly });
+    if (map) {
+      _brailleMapCache.set(key, map);
+      while (_brailleMapCache.size > 48) {
+        _brailleMapCache.delete(_brailleMapCache.keys().next().value);
+      }
+    }
+  }
+  return map;
+}
+
+function _hasBraillePlacements() {
+  return braillePool.some(B => B.placements.length > 0);
+}
+
+/** Export/bake is possible with texture layers OR placed Braille blocks. */
+function _hasExportContent() {
+  return _hasTexturedLayer() || _hasBraillePlacements();
+}
+
+/** Rebuild the shared block atlas when any block's map changed. */
+function _ensureBlockAtlas() {
+  const items = [];
+  const sigParts = [];
+  for (const B of braillePool) {
+    if (!B.placements.length) continue;
+    const map = _brailleMapFor(B);
+    if (!map) continue;
+    B.map = map;
+    items.push({ id: B.id, canvas: map.canvas });
+    sigParts.push(`${B.id}:${_brailleBlockKey(B)}`);
+  }
+  const sig = sigParts.join('|');
+  if (_blockAtlas && _blockAtlas.sig === sig) return _blockAtlas;
+  const packed = packBlockAtlas(items);
+  if (!packed) { _blockAtlas = null; return null; }
+  const texture = new THREE.CanvasTexture(packed.canvas);
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  _blockAtlas = { texture, rects: packed.rects, sig };
+  return _blockAtlas;
+}
+
+/** Block placements for the preview shader (capped at MAX_PREVIEW_BLOCKS). */
+function _previewBlocks() {
+  if (!_hasBraillePlacements()) return { list: [], atlasTex: null };
+  const atlas = _ensureBlockAtlas();
+  if (!atlas) return { list: [], atlasTex: null };
+  const list = [];
+  for (const B of braillePool) {
+    if (!B.map || !B.placements.length) continue;
+    const rect = atlas.rects.get(B.id);
+    if (!rect) continue;
+    for (const pl of B.placements) {
+      if (list.length >= MAX_PREVIEW_BLOCKS) return { list, atlasTex: atlas.texture };
+      list.push({ desc: blockDescriptor(B, pl), rect });
+    }
+  }
+  return { list, atlasTex: atlas.texture };
+}
+
+/** Block placements as pipeline pseudo-layers. baseOnly: recessed blocks
+ *  contribute their pockets-only maps (the separate-part base body), raised
+ *  blocks are omitted entirely (they become their own solid volume). */
+function _blockPipelineLayers(positions, { baseOnly = false } = {}) {
+  const out = [];
+  for (const B of braillePool) {
+    if (!B.placements.length) continue;
+    for (const pl of B.placements) {
+      if (baseOnly && B.params.mode !== 'recessed') continue;
+      const map = _brailleMapFor(B, baseOnly && B.params.mode === 'recessed');
+      if (!map) continue;
+      out.push(blockToPipelineLayer({ ...B, map }, pl, positions));
+    }
+  }
+  return out;
+}
+
+// ── Braille snapshot (undo / session / project) ─────────────────────────────
+
+function _brailleSnapshot() {
+  return {
+    seq: _brailleSeq,
+    activeBlock: brailleActiveBlock,
+    activePlacement: brailleActivePlacement,
+    mode: brailleMode,
+    pool: braillePool.map(B => ({
+      id: B.id, label: B.label, text: B.text,
+      params: { ...B.params },
+      placements: B.placements.map(pl => ({
+        center: [...pl.center], normal: [...pl.normal], rotation: pl.rotation,
+        name: pl.name,
+      })),
+    })),
+  };
+}
+
+function _restoreBrailleSnapshot(data) {
+  braillePool = (data?.pool ?? []).map(B => ({
+    id: B.id, label: B.label, text: B.text, params: { ...B.params },
+    placements: (B.placements ?? []).map(pl => ({
+      center: [...pl.center], normal: [...pl.normal], rotation: _normDeg(pl.rotation ?? 0),
+      name: pl.name,
+    })),
+  }));
+  _brailleSeq = data?.seq ?? braillePool.reduce((m, B) => Math.max(m, B.id), 0);
+  brailleActiveBlock = Math.min(Math.max(-1, data?.activeBlock ?? -1), braillePool.length - 1);
+  brailleActivePlacement = data?.activePlacement ?? -1;
+  if (brailleActiveBlock >= 0
+      && !braillePool[brailleActiveBlock]?.placements[brailleActivePlacement]) {
+    brailleActivePlacement = -1;
+  }
+  setBrailleMode(data?.mode ?? true);
+  _renderBraillePool();
+  _renderBrailleEditor();
+}
+
+/** Placements are tied to the loaded mesh — dropped when a new model arrives. */
+function _brailleClearPlacements() {
+  let changed = false;
+  for (const B of braillePool) {
+    if (B.placements.length) { B.placements = []; changed = true; }
+  }
+  brailleActivePlacement = -1;
+  if (changed) { _renderBraillePool(); _renderBrailleEditor(); }
+}
+
+// ── Braille mode switch ─────────────────────────────────────────────────────
+
+function setBrailleMode(on) {
+  if (brailleMode === on) return;
+  brailleMode = on;
+  document.body.classList.toggle('braille-mode', on);
+  modeTextureBtn.classList.toggle('active', !on);
+  modeTextureBtn.setAttribute('aria-pressed', String(!on));
+  modeBrailleBtn.classList.toggle('active', on);
+  modeBrailleBtn.setAttribute('aria-pressed', String(on));
+  brailleSection.hidden = !on;
+  if (on) {
+    if (exclusionTool) setExclusionTool(null);
+    if (placeOnFaceActive) togglePlaceOnFace(false);
+    if (rotateActive) toggleRotateMode(false);
+    _renderBraillePool();
+    _renderBrailleEditor();
+  } else {
+    _toggleBraillePlace(false);
+  }
+  updatePreview();
+  _autoSaveSettings();
+}
+
+// ── Braille UI rendering ────────────────────────────────────────────────────
+
+function _populateBrailleLangSelects() {
+  for (const sel of [brailleLangSelect, brailleEditLang]) {
+    if (!sel) continue;
+    sel.innerHTML = '';
+    for (const L of BRAILLE_LANGUAGES) {
+      const opt = document.createElement('option');
+      opt.value = L.id;
+      opt.textContent = L.label;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+function _renderBraillePool() {
+  if (!braillePoolEl) return;
+  braillePoolEl.innerHTML = '';
+  braillePoolEmptyEl?.classList.toggle('hidden', braillePool.length > 0);
+  braillePool.forEach((B, i) => {
+    const row = document.createElement('div');
+    row.className = 'braille-pool-row' + (i === brailleActiveBlock ? ' active' : '');
+    row.draggable = true;
+    row.dataset.blockId = String(B.id);
+    row.title = t('braille.poolRowTitle', { label: B.label });
+
+    const label = document.createElement('span');
+    label.className = 'braille-pool-label';
+    label.textContent = B.label;
+    row.appendChild(label);
+
+    const count = document.createElement('span');
+    count.className = 'braille-pool-count';
+    count.textContent = t('braille.placementCount', { n: B.placements.length });
+    count.title = t('braille.placementCountTitle');
+    row.appendChild(count);
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'braille-row-btn danger';
+    del.title = t('braille.deleteBlock');
+    del.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    row.appendChild(del);
+
+    braillePoolEl.appendChild(row);
+  });
+}
+
+function _renderBrailleEditor() {
+  const B = braillePool[brailleActiveBlock];
+  if (!B || !brailleEditorEl) {
+    brailleEditorEl?.classList.add('hidden');
+    return;
+  }
+  brailleEditorEl.classList.remove('hidden');
+  brailleEditorTitleEl.textContent = B.label;
+  if (document.activeElement !== brailleEditText) brailleEditText.value = B.text;
+  if (brailleEditLang) brailleEditLang.value = B.params.language;
+  if (brailleAlignSelect) brailleAlignSelect.value = B.params.align;
+
+  const raised = B.params.mode !== 'recessed';
+  brailleModeRaisedBtn.classList.toggle('active', raised);
+  brailleModeRaisedBtn.setAttribute('aria-pressed', String(raised));
+  brailleModeRecessedBtn.classList.toggle('active', !raised);
+  brailleModeRecessedBtn.setAttribute('aria-pressed', String(!raised));
+  recessMarginRow?.classList.toggle('hidden', raised);
+  recessDepthRow?.classList.toggle('hidden', raised);
+
+  if (brailleBlackShowChk) brailleBlackShowChk.checked = !!B.params.blackShow;
+  brailleBlackRows?.classList.toggle('hidden', !B.params.blackShow);
+  const engrave = B.params.blackRelief !== 'emboss';
+  brailleBlackEngraveBtn?.classList.toggle('active', engrave);
+  brailleBlackEmbossBtn?.classList.toggle('active', !engrave);
+
+  for (const k of BR_PARAM_KEYS) {
+    const { slider, val } = brSliders[k];
+    if (!slider || !val) continue;
+    slider.value = B.params[k];
+    val.value = B.params[k];
+  }
+
+  const pl = B.placements[brailleActivePlacement];
+  _syncBraillePlacementEditor(B, pl);
+
+  _renderBraillePlacements();
+}
+
+// ── Placement location: face side + edge distances ───────────────────────────
+
+/**
+ * Where a placement sits: face side (dominant normal axis) and the distances
+ * (mm) from the face's edges to the relief's bounding box, measured in the
+ * face's canonical frame (blockFrame(normal, 0) — independent of the block's
+ * own rotation). The relief box is the map's contentRect, rotated by the
+ * placement rotation into an axis-aligned box.
+ */
+function _placementFaceInfo(B, pl) {
+  if (!currentBounds || !pl) return null;
+  const map = _brailleMapFor(B);
+  if (!map) return null;
+  const n = pl.normal;
+  const ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
+  const side = (ay >= ax && ay >= az) ? (n[1] > 0 ? 'top' : 'bottom')
+             : (ax >= az) ? (n[0] > 0 ? 'right' : 'left')
+             : (n[2] > 0 ? 'front' : 'back');
+  const f = blockFrame(n, 0);
+  const r = f.r, u = f.u;
+  const min = currentBounds.min, max = currentBounds.max;
+  let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+  for (const cx of [min.x, max.x]) for (const cy of [min.y, max.y]) for (const cz of [min.z, max.z]) {
+    const a = cx * r[0] + cy * r[1] + cz * r[2];
+    const b = cx * u[0] + cy * u[1] + cz * u[2];
+    if (a < minA) minA = a;
+    if (a > maxA) maxA = a;
+    if (b < minB) minB = b;
+    if (b > maxB) maxB = b;
+  }
+  const faceW = maxA - minA, faceH = maxB - minB;
+  const cr = map.contentRect ?? { x0: 0, y0: 0, x1: map.widthMm, y1: map.heightMm };
+  const rw = Math.max(0, cr.x1 - cr.x0), rh = Math.max(0, cr.y1 - cr.y0);
+  const dcx = (cr.x0 + cr.x1) / 2 - map.widthMm / 2;
+  const dcy = (cr.y0 + cr.y1) / 2 - map.heightMm / 2;
+  const th = (pl.rotation || 0) * Math.PI / 180;
+  const c = Math.cos(th), s = Math.sin(th);
+  const halfW = (rw * Math.abs(c) + rh * Math.abs(s)) / 2;
+  const halfH = (rw * Math.abs(s) + rh * Math.abs(c)) / 2;
+  const offA = dcx * c + dcy * s;
+  const offB = -dcx * s + dcy * c;
+  const relA = pl.center[0] * r[0] + pl.center[1] * r[1] + pl.center[2] * r[2] - minA + offA;
+  const relB = pl.center[0] * u[0] + pl.center[1] * u[1] + pl.center[2] * u[2] - minB + offB;
+  return {
+    side, faceW, faceH, halfW, halfH, relA, relB, r, u,
+    left: relA - halfW, bottom: relB - halfH,
+    right: faceW - relA - halfW, top: faceH - relB - halfH,
+  };
+}
+
+/** Move a placement so its relief sits `left` / `bottom` mm from the face's
+ *  edges (face canonical frame). Clamps so the relief stays on the face when
+ *  it fits; moves strictly along the face plane (normal offset preserved). */
+function _moveBraillePlacement(B, pl, left, bottom) {
+  const info = _placementFaceInfo(B, pl);
+  if (!info) return;
+  const fitsW = info.halfW * 2 <= info.faceW, fitsH = info.halfH * 2 <= info.faceH;
+  const tA = fitsW ? Math.min(Math.max(left, 0) + info.halfW, info.faceW - info.halfW)
+                   : left + info.halfW;
+  const tB = fitsH ? Math.min(Math.max(bottom, 0) + info.halfH, info.faceH - info.halfH)
+                   : bottom + info.halfH;
+  const dA = tA - info.relA, dB = tB - info.relB;
+  pl.center = [
+    pl.center[0] + info.r[0] * dA + info.u[0] * dB,
+    pl.center[1] + info.r[1] * dA + info.u[1] * dB,
+    pl.center[2] + info.r[2] * dA + info.u[2] * dB,
+  ];
+}
+
+/** Rotation + position rows for the selected placement — shared by the full
+ *  editor render and the quiet placement-row select (keeps input focus). */
+function _syncBraillePlacementEditor(B, pl) {
+  brRotationRow?.classList.toggle('hidden', !pl);
+  if (pl) {
+    brRotationSlider.value = pl.rotation;
+    brRotationVal.value = pl.rotation;
+  }
+  brPositionRow?.classList.toggle('hidden', !pl);
+  if (pl) {
+    const info = _placementFaceInfo(B, pl);
+    if (brPositionSideEl) brPositionSideEl.textContent = info ? t('braille.side.' + info.side) : '';
+    if (info) {
+      if (document.activeElement !== brPosLeft) brPosLeft.value = info.left.toFixed(1);
+      if (document.activeElement !== brPosBottom) brPosBottom.value = info.bottom.toFixed(1);
+    }
+  }
+  if (brailleLocalizeBtn) brailleLocalizeBtn.disabled = !pl;
+}
+
+function _renderBraillePlacements() {
+  if (!braillePlacementsEl) return;
+  braillePlacementsEl.innerHTML = '';
+  const B = braillePool[brailleActiveBlock];
+  if (!B) return;
+  B.placements.forEach((pl, pi) => {
+    const row = document.createElement('div');
+    row.className = 'braille-placement-row' + (pi === brailleActivePlacement ? ' active' : '');
+    row.dataset.plIdx = String(pi);
+    row.title = t('braille.placementRowTitle');
+
+    const name = document.createElement('input');
+    name.type = 'text';
+    name.className = 'braille-placement-name';
+    name.value = pl.name || _defaultPlacementName(B, pi);
+    name.title = t('braille.placementNameTitle');
+    name.spellcheck = false;
+    name.addEventListener('keydown', (e) => { if (e.key === 'Enter') name.blur(); });
+    name.addEventListener('change', () => {
+      pl.name = name.value.trim() || _defaultPlacementName(B, pi);
+      name.value = pl.name;
+      _autoSaveSettings();
+    });
+
+    const main = document.createElement('div');
+    main.className = 'braille-placement-main';
+    main.appendChild(name);
+    const info = _placementFaceInfo(B, pl);
+    if (info) {
+      const loc = document.createElement('span');
+      loc.className = 'braille-placement-info';
+      loc.textContent = t('braille.placementInfo', {
+        side: t('braille.side.' + info.side),
+        left: info.left.toFixed(1),
+        bottom: info.bottom.toFixed(1),
+      });
+      main.appendChild(loc);
+    }
+    row.appendChild(main);
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'braille-row-btn danger';
+    del.title = t('braille.deletePlacement');
+    del.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    row.appendChild(del);
+
+    braillePlacementsEl.appendChild(row);
+  });
+  if (B.placements.length >= MAX_PREVIEW_BLOCKS) {
+    const warn = document.createElement('p');
+    warn.className = 'braille-hint';
+    warn.textContent = t('braille.previewLimit', { n: MAX_PREVIEW_BLOCKS });
+    braillePlacementsEl.appendChild(warn);
+  }
+}
+
+/** Default placement title: the block's text (its label), deduped with
+ *  " 2", " 3" … so every placement of a block stays individually addressable. */
+function _defaultPlacementName(B, exceptIdx = -1) {
+  const base = B.label || 'Braille';
+  const taken = new Set(B.placements.map((p, i) => (i === exceptIdx ? null : p.name)));
+  let name = base, n = 2;
+  while (taken.has(name)) name = `${base} ${n++}`;
+  return name;
+}
+
+// ── Braille actions ─────────────────────────────────────────────────────────
+
+function _addBrailleBlock() {
+  const text = (brailleTextInput.value ?? '').trim();
+  if (!text) return;
+  const params = { ...BRAILLE_DEFAULTS, language: brailleLangSelect?.value || 'de' };
+  const label = text.split(/\r?\n/)[0].trim().slice(0, 24) || 'Braille';
+  braillePool.push({ id: ++_brailleSeq, label, text, params, placements: [] });
+  brailleTextInput.value = '';
+  brailleActiveBlock = braillePool.length - 1;
+  brailleActivePlacement = -1;
+  _renderBraillePool();
+  _renderBrailleEditor();
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+}
+
+function _selectBrailleBlock(i) {
+  if (i === brailleActiveBlock) return;
+  brailleActiveBlock = i;
+  brailleActivePlacement = -1;
+  // Switching blocks while placing keeps place mode on — the next model
+  // click then places the newly selected block.
+  if (!braillePlaceActive) _toggleBraillePlace(false);
+  _renderBraillePool();
+  _renderBrailleEditor();
+  _autoSaveSettings();
+}
+
+/** Sidebar scroll: bring the placement list of the selected block into view. */
+function _scrollToBraillePlacements() {
+  braillePlacementsEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function _deleteBrailleBlock(i) {
+  if (i < 0 || i >= braillePool.length) return;
+  braillePool.splice(i, 1);
+  if (brailleActiveBlock === i) { brailleActiveBlock = -1; brailleActivePlacement = -1; }
+  else if (brailleActiveBlock > i) brailleActiveBlock--;
+  _toggleBraillePlace(false);
+  _renderBraillePool();
+  _renderBrailleEditor();
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+}
+
+/** Write one parameter to the active block; the map regenerates from the key. */
+function _setBrailleParam(key, v) {
+  const B = braillePool[brailleActiveBlock];
+  if (!B) return;
+  B.params[key] = v;
+  updatePreview();
+}
+
+function _setBrailleBlockText(v) {
+  const B = braillePool[brailleActiveBlock];
+  if (!B) return;
+  B.text = String(v ?? '');
+  B.label = B.text.split(/\r?\n/)[0].trim().slice(0, 24) || 'Braille';
+  _renderBraillePool();
+  brailleEditorTitleEl.textContent = B.label;
+  updatePreview();
+  _autoSaveSettings();
+}
+
+function _setBrailleLanguage(v) {
+  const B = braillePool[brailleActiveBlock];
+  if (!B) return;
+  B.params.language = v;
+  updatePreview();
+  _autoSaveSettings();
+}
+
+function _setBrailleBlockMode(mode) {
+  const B = braillePool[brailleActiveBlock];
+  if (!B) return;
+  B.params.mode = mode;
+  _renderBrailleEditor();
+  updatePreview();
+  _autoSaveSettings();
+}
+
+function _setBrailleBlackRelief(mode) {
+  const B = braillePool[brailleActiveBlock];
+  if (!B) return;
+  B.params.blackRelief = mode;
+  _renderBrailleEditor();
+  updatePreview();
+  _autoSaveSettings();
+}
+
+/** Normalize degrees to -180…180 — the centered rotation slider's range. */
+function _normDeg(v) {
+  return ((Math.round(v) % 360) + 540) % 360 - 180;
+}
+
+function _setBraillePlacementRotation(v) {
+  const r = _normDeg(v);
+  const B = braillePool[brailleActiveBlock];
+  const pl = B?.placements[brailleActivePlacement];
+  if (pl) {
+    pl.rotation = r;
+    updatePreview();
+  }
+  return r;
+}
+
+function _toggleBraillePlace(on) {
+  if (on && brailleActiveBlock < 0) return;
+  braillePlaceActive = on;
+  braillePlaceBtn?.classList.toggle('active', on);
+  braillePlaceBtn?.setAttribute('aria-pressed', String(on));
+  setSectionHandlesLocked(on || !!_brailleMoveDrag);
+  if (on) {
+    if (exclusionTool) setExclusionTool(null);
+    // Placing raycasts the base surface — the displaced preview would offset hits.
+    if (settings.useDisplacement) {
+      settings.useDisplacement = false;
+      dispPreviewToggle.checked = false;
+      toggleDisplacementPreview(false);
+    }
+    canvas.style.cursor = 'crosshair';
+  } else if (!exclusionTool && !_brailleMoveDrag) {
+    canvas.style.cursor = '';
+  }
+}
+
+function _placeBrailleAtHit(hit) {
+  const B = braillePool[brailleActiveBlock];
+  if (!B || !hit) return;
+  const n = hit.face.normal.clone().normalize();
+  B.placements.push({
+    center: [hit.point.x, hit.point.y, hit.point.z],
+    normal: [n.x, n.y, n.z],
+    rotation: 0,
+    name: _defaultPlacementName(B),
+  });
+  brailleActivePlacement = B.placements.length - 1;
+  _renderBraillePool();
+  _renderBrailleEditor();
+  updatePreview();
+  _autoSaveSettings();
+}
+
+function handleBraillePlaceClick(e) {
+  const mesh = getCurrentMesh();
+  if (!mesh) return;
+  _raycaster.setFromCamera(_canvasNDC(e), getCamera());
+  const hits = _raycaster.intersectObject(mesh);
+  const hit = getFrontFaceHit(hits, mesh);
+  if (!hit) return;
+  _placeBrailleAtHit(hit);
+}
+
+/** The placement under the cursor (active block's placements first). */
+function _braillePlacementUnderCursor(e) {
+  const mesh = getCurrentMesh();
+  if (!mesh || !_hasBraillePlacements()) return null;
+  _raycaster.setFromCamera(_canvasNDC(e), getCamera());
+  const hits = _raycaster.intersectObject(mesh);
+  const hit = getFrontFaceHit(hits, mesh);
+  if (!hit) return null;
+  const order = [];
+  if (brailleActiveBlock >= 0) order.push(brailleActiveBlock);
+  for (let i = 0; i < braillePool.length; i++) if (i !== brailleActiveBlock) order.push(i);
+  for (const bi of order) {
+    const B = braillePool[bi];
+    if (!B?.placements.length) continue;
+    const map = _brailleMapFor(B);
+    if (!map) continue;
+    for (let pi = 0; pi < B.placements.length; pi++) {
+      const d = blockDescriptor({ ...B, map }, B.placements[pi]);
+      const dx = hit.point.x - d.center[0], dy = hit.point.y - d.center[1], dz = hit.point.z - d.center[2];
+      const a = dx * d.r[0] + dy * d.r[1] + dz * d.r[2];
+      const b = dx * d.u[0] + dy * d.u[1] + dz * d.u[2];
+      const nd = dx * d.n[0] + dy * d.n[1] + dz * d.n[2];
+      if (Math.abs(a) <= d.widthMm / 2 + 1 && Math.abs(b) <= d.heightMm / 2 + 1
+          && Math.abs(nd) <= d.tol + 1) {
+        return { blockIdx: bi, plIdx: pi, hit };
+      }
+    }
+  }
+  return null;
+}
+
+function _brailleMoveToCursor(e) {
+  const mesh = getCurrentMesh();
+  if (!mesh || !_brailleMoveDrag) return;
+  _raycaster.setFromCamera(_canvasNDC(e), getCamera());
+  const hits = _raycaster.intersectObject(mesh);
+  const hit = getFrontFaceHit(hits, mesh);
+  if (!hit) return;
+  const B = braillePool[_brailleMoveDrag.blockIdx];
+  const pl = B?.placements[_brailleMoveDrag.plIdx];
+  if (!pl) return;
+  const n = hit.face.normal.clone().normalize();
+  pl.center = [hit.point.x, hit.point.y, hit.point.z];
+  pl.normal = [n.x, n.y, n.z];
+  updatePreview();
+  requestRender();
+}
+
+function _selectBraillePlacement(pi) {
+  const B = braillePool[brailleActiveBlock];
+  if (!B || pi < 0 || pi >= B.placements.length) return;
+  brailleActivePlacement = pi;
+  _renderBraillePool();
+  _renderBrailleEditor();
+  swingToPlacement(brailleActiveBlock, pi);
+  _autoSaveSettings();
+}
+
+function _deleteBraillePlacement(pi) {
+  const B = braillePool[brailleActiveBlock];
+  if (!B || pi < 0 || pi >= B.placements.length) return;
+  B.placements.splice(pi, 1);
+  if (brailleActivePlacement === pi) brailleActivePlacement = -1;
+  else if (brailleActivePlacement > pi) brailleActivePlacement--;
+  _renderBraillePool();
+  _renderBrailleEditor();
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+}
+
+/** Reset the active block's parameters to the defaults a new block starts
+ *  with (text, label and placements are kept). */
+function _resetBrailleParams() {
+  const B = braillePool[brailleActiveBlock];
+  if (!B) return;
+  B.params = { ...BRAILLE_DEFAULTS, language: brailleLangSelect?.value || 'de' };
+  _renderBraillePool();
+  _renderBrailleEditor();
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+}
+
+/** Detach the selected placement into a NEW pool block with the current
+ *  editor values — the "local change" from the workflow description. */
+function _localizeBrailleBlock() {
+  const B = braillePool[brailleActiveBlock];
+  const pl = B?.placements[brailleActivePlacement];
+  if (!B || !pl) return;
+  let n = 2;
+  while (braillePool.some(X => X.label === `${B.label} (${n})`)) n++;
+  const nb = {
+    id: ++_brailleSeq,
+    label: `${B.label} (${n})`,
+    text: B.text,
+    params: { ...B.params },
+    placements: [pl],
+  };
+  B.placements.splice(brailleActivePlacement, 1);
+  braillePool.push(nb);
+  brailleActiveBlock = braillePool.length - 1;
+  brailleActivePlacement = 0;
+  _renderBraillePool();
+  _renderBrailleEditor();
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+}
+
+/** Swing the camera to a placement: target on the block centre, eye back
+ *  along the face normal, ~0.6 s eased. */
+function swingToPlacement(blockIdx, plIdx) {
+  const B = braillePool[blockIdx];
+  const pl = B?.placements[plIdx];
+  if (!pl || !currentGeometry) return;
+  const center = new THREE.Vector3(pl.center[0], pl.center[1], pl.center[2]);
+  const normal = new THREE.Vector3(pl.normal[0], pl.normal[1], pl.normal[2]).normalize();
+  const cam = getCamera();
+  const controls = getControls();
+  const dist = Math.max(cam.position.distanceTo(controls.target), 1);
+  const eyeTo = center.clone().addScaledVector(normal, Math.max(dist * 0.6, 8));
+  const fromTarget = controls.target.clone();
+  const fromPos = cam.position.clone();
+  if (_brailleCamAnim) cancelAnimationFrame(_brailleCamAnim);
+  const t0 = performance.now();
+  const step = () => {
+    const t = Math.min(1, (performance.now() - t0) / 600);
+    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    controls.target.lerpVectors(fromTarget, center, e);
+    cam.position.lerpVectors(fromPos, eyeTo, e);
+    controls.update();
+    requestRender();
+    _brailleCamAnim = t < 1 ? requestAnimationFrame(step) : 0;
+  };
+  step();
+}
+
+// ── Braille export: the Braille as its own volume ───────────────────────────
+
+/**
+ * Braille solids, ONE part per pool block (all of a block's placements merged
+ * into that block's volume). The 3MF then carries base + one volume per block,
+ * so the slicer can colour or split them word by word. Working space.
+ */
+function _buildBrailleSolidParts() {
+  const parts = [];
+  for (const B of braillePool) {
+    if (!B.placements.length) continue;
+    const map = _brailleMapFor(B);
+    if (!map) continue;
+    const chunks = [];
+    let total = 0;
+    for (const pl of B.placements) {
+      const solid = buildBrailleSolid({ ...B, map }, pl);
+      chunks.push(solid);
+      total += solid.length;
+    }
+    const out = new Float32Array(total);
+    let o = 0;
+    for (const c of chunks) { out.set(c, o); o += c.length; }
+    parts.push({ name: B.label || 'Braille', positions: out });
+  }
+  return parts;
+}
+
+/**
+ * "Braille als eigenes Teil": the 3MF carries the base body (texture layers
+ * baked as usual; recessed blocks contribute their pockets) and the Braille
+ * dots as a SEPARATE volume, so the slicer can colour or split them.
+ */
+async function handleExport3MFPart() {
+  if (!currentGeometry || !_hasBraillePlacements() || isExporting || isBaking) return;
+  const myToken = ++exportToken;
+  isExporting = true;
+  exportBtn.classList.add('busy');
+  export3mfBtn.classList.add('busy');
+  export3mfPartBtn.classList.add('busy');
+  exportProgress.classList.remove('hidden');
+
+  let exportSucceeded = false;
+  try {
+    setProgress(0.02, t('progress.subdividing'));
+    await yieldFrame();
+    if (exportToken !== myToken) return;
+
+    // Base body: run the pipeline only when it has relief to bake (texture
+    // layers or recessed pockets); a clean base skips straight to the pose
+    // restore — applyDisplacement has no map to sample otherwise.
+    const hasBaseRelief = _hasTexturedLayer()
+      || braillePool.some(B => B.placements.length
+        && (B.params.mode === 'recessed' || B.params.blackShow));
+    let basePositions, baseNormals = null;
+    if (hasBaseRelief) {
+      const inputs = _pipelineInputs({ baseOnly: true });
+      const result = await runPipeline({
+        positions: inputs.positions,
+        faceWeights: inputs.faceWeights,
+        softExclude: inputs.softExclude,
+        imageData: inputs.imageData,
+        imgWidth: inputs.imgWidth,
+        imgHeight: inputs.imgHeight,
+        layers: inputs.layers,
+        settings: { ...settings, refineLength: _effectiveRefineLength() },
+        bounds: currentBounds,
+        regularizeOpts: _regularizeOpts(),
+        mode: 'export',
+      }, _onExportPipelineEvent, () => exportToken !== myToken);
+      if (!result || exportToken !== myToken) return;
+      _restoreOriginalPose(result.positions, result.normals);
+      basePositions = result.positions;
+      baseNormals = result.normals;
+    } else {
+      basePositions = Float32Array.from(currentGeometry.attributes.position.array);
+      _restoreOriginalPose(basePositions, null);
+    }
+
+    const brailleParts = _buildBrailleSolidParts();
+    for (const p of brailleParts) _restoreOriginalPose(p.positions, null);
+    if (!brailleParts.length) throw new Error('No Braille geometry');
+
+    setProgress(0.97, t('progress.writing3mf'));
+    await yieldFrame();
+    if (exportToken !== myToken) return;
+    const baseName = `${currentStlName}_braille-teil`;
+    await export3MFVolumes([
+      { name: currentStlName || 'Model', positions: basePositions },
+      ...brailleParts,
+    ], `${baseName}.3mf`, () => exportToken !== myToken);
+    exportSucceeded = true;
+
+    setProgress(1.0, t('progress.done'));
+    setTimeout(() => {
+      exportProgress.classList.add('hidden');
+      setProgress(0, '');
+    }, 1500);
+  } catch (err) {
+    if (exportToken !== myToken) return;
+    console.error('Braille-part export failed:', err);
+    if (/maximum size|out of memory|alloc/i.test(err.message)) {
+      alert(t('alerts.exportOOM'));
+    } else {
+      alert(t('alerts.exportFailed', { msg: err.message }));
+    }
+  } finally {
+    if (!exportSucceeded) exportProgress.classList.add('hidden');
+    isExporting = false;
+    exportBtn.classList.remove('busy');
+    export3mfBtn.classList.remove('busy');
+    export3mfPartBtn.classList.remove('busy');
   }
 }
 
@@ -3159,9 +4246,9 @@ function handlePlaceOnFaceClick(e) {
   const sz = currentBounds.size.z.toFixed(2);
   _setMeshInfo(triCount, mb, sx, sy, sz);
 
-  exportBtn.disabled = !_hasTexturedLayer();
-  export3mfBtn.disabled = !_hasTexturedLayer();
-  bakeBtn.disabled = !_hasTexturedLayer();
+  exportBtn.disabled = !_hasExportContent();
+  export3mfBtn.disabled = !_hasExportContent();
+  bakeBtn.disabled = !_hasExportContent();
   updateSmartResBtnState();
   updatePreview();
 
@@ -3609,6 +4696,8 @@ function loadDefaultCube() {
   setHoverPreview(null);
   _lastHoverTriIdx = -1;
   exclCount.textContent = t('excl.initExcluded');
+  // Braille placements referenced the previous mesh's faces.
+  _brailleClearPlacements();
 
   const adjData = buildAdjacency(geo);
   triangleAdjacency = adjData.adjacency;
@@ -3639,9 +4728,9 @@ function loadDefaultCube() {
   const sz = currentBounds.size.z.toFixed(2);
   _setMeshInfo(triCount, mb, sx, sy, sz);
 
-  exportBtn.disabled = !_hasTexturedLayer();
-  export3mfBtn.disabled = !_hasTexturedLayer();
-  bakeBtn.disabled = !_hasTexturedLayer();
+  exportBtn.disabled = !_hasExportContent();
+  export3mfBtn.disabled = !_hasExportContent();
+  bakeBtn.disabled = !_hasExportContent();
   updateSmartResBtnState();
   updatePreview();
 }
@@ -3831,6 +4920,8 @@ async function handleModelFile(file, stepSettings = null) {
     setHoverPreview(null);
     _lastHoverTriIdx = -1;
     exclCount.textContent = t('excl.initExcluded');
+    // Braille placements referenced the previous mesh's faces.
+    _brailleClearPlacements();
     // Build adjacency data for brush/bucket tools (synchronous; fast enough for
     // typical STL sizes processed by this tool)
     const adjData = buildAdjacency(currentGeometry);
@@ -3862,8 +4953,8 @@ async function handleModelFile(file, stepSettings = null) {
     const sz = bounds.size.z.toFixed(2);
     _setMeshInfo(triCount, mb, sx, sy, sz);
 
-    exportBtn.disabled = !_hasTexturedLayer();
-    export3mfBtn.disabled = !_hasTexturedLayer();
+    exportBtn.disabled = !_hasExportContent();
+    export3mfBtn.disabled = !_hasExportContent();
     updateSmartResBtnState();
     updatePreview();
   } catch (err) {
@@ -4659,6 +5750,7 @@ function _regularizeOpts() {
 // Global settings for the preview material's uniforms (per-layer parameters
 // come from _previewLayers).
 function _materialSettings(preview) {
+  const blocks = _previewBlocks();
   return {
     bounds: currentBounds,
     bottomAngleLimit: settings.bottomAngleLimit,
@@ -4674,6 +5766,9 @@ function _materialSettings(preview) {
     // With several layers, surfaces the active layer does not cover are
     // shown in neutral grey instead of the single-layer orange/dark grey.
     layeredTint: preview.count > 1,
+    // Braille block placements (preview shader).
+    blocks: blocks.list,
+    blockAtlas: blocks.atlasTex,
   };
 }
 
@@ -4687,8 +5782,8 @@ function _syncPreviewMaterial() {
 function updatePreview() {
   if (!currentGeometry || !currentBounds) return;
 
-  if (!_hasTexturedLayer()) {
-    // No map yet — plain material
+  if (!_hasExportContent()) {
+    // No map and no Braille yet — plain material
     if (previewMaterial) {
       setMeshMaterial(null);
       previewMaterial.dispose();
@@ -4696,6 +5791,7 @@ function updatePreview() {
     }
     exportBtn.disabled = true;
     export3mfBtn.disabled = true;
+    export3mfPartBtn?.classList.add('hidden');
     bakeBtn.disabled = true;
     updateSmartResBtnState();
     _renderLayerStrip();
@@ -4720,6 +5816,8 @@ function updatePreview() {
   syncBoundaryEdgeUniforms();
   exportBtn.disabled = false;
   export3mfBtn.disabled = false;
+  export3mfPartBtn?.classList.toggle('hidden', !_hasBraillePlacements());
+  if (export3mfPartBtn) export3mfPartBtn.disabled = !_hasBraillePlacements();
   bakeBtn.disabled = isBaking;
   updateSmartResBtnState();
   _renderLayerStrip();
@@ -4772,8 +5870,8 @@ async function toggleDisplacementPreview(enable) {
     return;
   }
 
-  // Need a model and texture to subdivide
-  if (!currentGeometry || !currentBounds || !_hasTexturedLayer()) {
+  // Need a model and something to displace (texture or Braille) to subdivide
+  if (!currentGeometry || !currentBounds || !_hasExportContent()) {
     dispPreviewToggle.checked = false;
     settings.useDisplacement = false;
     return;
@@ -4788,7 +5886,7 @@ async function toggleDisplacementPreview(enable) {
     // a 50 mm cube ~0.6 mm edges).
     const maxDim = Math.max(currentBounds.size.x, currentBounds.size.y, currentBounds.size.z);
     const maxEdge = Math.max(0.1, maxDim / 80);
-    const floorEdge = settings.refineLength;
+    const floorEdge = _effectiveRefineLength();
     dispPreviewEdgeInfo = { floorEdge, maxEdge, edge: null };
 
     const result = await runPreviewBuild({
@@ -4881,7 +5979,7 @@ function scheduleDisplacementPreviewResolutionRefresh() {
   _dispPreviewResolutionTimer = setTimeout(() => {
     const info = dispPreviewEdgeInfo;
     if (!settings.useDisplacement || !info) return;
-    const newFloor = settings.refineLength;
+    const newFloor = _effectiveRefineLength();
     if (Math.min(newFloor, info.maxEdge) === Math.min(info.floorEdge, info.maxEdge)) return;
     // A finished build that the budget (not the resolution) limited only
     // changes if the new resolution is coarser than the edge it used.
@@ -4972,7 +6070,7 @@ function _restoreOriginalPose(positions, normals = null) {
 }
 
 async function handleExport(format = 'stl') {
-  if (!currentGeometry || !_hasTexturedLayer() || isExporting || isBaking) return;
+  if (!currentGeometry || !_hasExportContent() || isExporting || isBaking) return;
   const myToken = ++exportToken;
   isExporting = true;
   exportBtn.classList.add('busy');
@@ -5008,7 +6106,7 @@ async function handleExport(format = 'stl') {
       imgWidth: inputs.imgWidth,
       imgHeight: inputs.imgHeight,
       layers: inputs.layers,
-      settings,
+      settings: { ...settings, refineLength: _effectiveRefineLength() },
       bounds: currentBounds,
       regularizeOpts: _regularizeOpts(),
       mode: 'export',
@@ -5328,7 +6426,7 @@ function setBakeProgress(fraction, label) {
 // mapping needed to translate "which input faces were textured" into the new
 // mesh's triangle indices. Final decimation still happens on Export.
 async function bakeTextures() {
-  if (!currentGeometry || !_hasTexturedLayer() || isBaking || isExporting) return;
+  if (!currentGeometry || !_hasExportContent() || isBaking || isExporting) return;
   isBaking = true;
   bakeBtn.classList.add('busy');
   bakeBtn.disabled = true;
@@ -5359,7 +6457,7 @@ async function bakeTextures() {
       imgWidth: inputs.imgWidth,
       imgHeight: inputs.imgHeight,
       layers: inputs.layers,
-      settings,
+      settings: { ...settings, refineLength: _effectiveRefineLength() },
       bounds: currentBounds,
       regularizeOpts: _regularizeOpts(),
       mode: 'bake',
@@ -5421,7 +6519,7 @@ async function bakeTextures() {
     if (!succeeded) bakeProgress.classList.add('hidden');
     isBaking = false;
     bakeBtn.classList.remove('busy');
-    bakeBtn.disabled = !_hasTexturedLayer();
+    bakeBtn.disabled = !_hasExportContent();
   }
 }
 
@@ -5477,6 +6575,8 @@ function adoptBakedGeometry(geometry, bounds, opts = {}) {
   _dropPaintGeometry();
   paintTree = null;
   if (selectionMode) setSelectionMode(false, { clear: false });
+  // The baked mesh replaced the one the placements were pinned to.
+  _brailleClearPlacements();
 
   // The bake flattened every layer into the geometry: continue with a single
   // fresh layer that keeps the active layer's texture and settings.
@@ -5532,9 +6632,9 @@ function adoptBakedGeometry(geometry, bounds, opts = {}) {
   const sz = bounds.size.z.toFixed(2);
   _setMeshInfo(triCount, mb, sx, sy, sz);
 
-  exportBtn.disabled = !_hasTexturedLayer();
-  export3mfBtn.disabled = !_hasTexturedLayer();
-  bakeBtn.disabled = !_hasTexturedLayer();
+  exportBtn.disabled = !_hasExportContent();
+  export3mfBtn.disabled = !_hasExportContent();
+  bakeBtn.disabled = !_hasExportContent();
   updateSmartResBtnState();
 
   updatePreview();
@@ -5626,6 +6726,7 @@ function getSettingsSnapshot() {
     };
   });
   snap.activeLayer = activeLayer;
+  snap.braille = _brailleSnapshot();
   return snap;
 }
 
@@ -5852,6 +6953,9 @@ function applySettingsSnapshot(snap) {
     cylinderPanel.classList.toggle('minimized', settings.cylinderPanelMinimized);
   }
   updateCylinderUIVisibility();
+
+  // Braille pool + placements (session restore / project import).
+  if (snap.braille) _restoreBrailleSnapshot(snap.braille);
 }
 
 /**
@@ -5901,6 +7005,9 @@ function _restoreSessionSettings() {
     _renderLayerStrip();
     _loadLayerMaps();
   }
+  // The session stores no model — restored Braille placements would pin to
+  // whatever mesh is loaded now. Keep the pool, drop the placements.
+  if (data.braille) _brailleClearPlacements();
 }
 
 // Delegate auto-save to input/change bubbling in the settings panel —
@@ -6439,10 +7546,29 @@ let _undoCaptureTimer = null;
 const undoBtn = document.getElementById('undo-btn');
 const redoBtn = document.getElementById('redo-btn');
 
+/**
+ * Effective subdivision edge for export/bake/preview: Braille dots need roughly
+ * eight vertices across their diameter to come out round (the preview shader
+ * is per-pixel, the mesh is not), so tighten the user's edge while blocks sit
+ * on the model.
+ */
+function _effectiveRefineLength() {
+  let edge = settings.refineLength;
+  if (_hasBraillePlacements()) {
+    let minD = Infinity;
+    for (const B of braillePool) {
+      if (B.placements.length) minD = Math.min(minD, Math.max(0.2, B.params.dotDiameter));
+    }
+    if (minD < Infinity) edge = Math.min(edge, Math.max(0.1, minD / 8));
+  }
+  return edge;
+}
+
 function _captureUndoSnapshot() {
   return {
     active: activeLayer,
     global: _globalSettingsSnapshot(),
+    braille: _brailleSnapshot(),
     layers: layers.map((L, i) => (i === activeLayer
       ? { id: L.id, settings: _layerSettingsSnapshot(), mapName: activeMapEntry?.name ?? null,
           customId: activeMapEntry?.customId ?? null, mapEntry: activeMapEntry,
@@ -6458,6 +7584,7 @@ function _undoSnapshotsEqual(a, b) {
   if (a === b) return true;
   if (!a || !b) return false;
   if (a.active !== b.active || a.layers.length !== b.layers.length) return false;
+  if (JSON.stringify(a.braille) !== JSON.stringify(b.braille)) return false;
   for (const k of GLOBAL_KEYS) {
     if (a.global[k] !== b.global[k]) return false;
   }
@@ -6531,6 +7658,7 @@ function _applyUndoSnapshot(snap) {
     // controls it doesn't find (invert, falloff curve), which the layer
     // materialisation then sets properly.
     applySettingsSnapshot(snap.global);
+    if (snap.braille) _restoreBrailleSnapshot(snap.braille);
     _materialiseActiveLayer();
     _renderLayerStrip();
     updatePreview();

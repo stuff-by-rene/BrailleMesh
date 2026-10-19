@@ -18,6 +18,9 @@ export const MODE_CUBIC       = 6;
 /** Texture layers the preview can composite at once (one vec4 attribute channel each). */
 export const MAX_LAYERS = 4;
 
+/** Placed Braille blocks the preview shader can address at once (GLSL #define MAX_BLOCKS). */
+export const MAX_BLOCKS = 8;
+
 // ── GLSL source ──────────────────────────────────────────────────────────────
 //
 // Preview strategy, two modes:
@@ -67,6 +70,64 @@ const sharedGLSL = /* glsl */`
   uniform float     topAngleLimit;
   uniform int       noDownwardZ;
   uniform int       useDisplacement;
+
+  // ── Braille blocks ──
+  // Placed Braille blocks read ONE shared atlas texture; each placement
+  // addresses its block's map through its own frame (centre / right / up /
+  // normal) in model millimetres. The weight is the face anchor (only faces
+  // matching the block's normal carry relief) times the content-rect
+  // membership; inside the content rect the block's map replaces the texture
+  // layers completely (cover semantics).
+  #define MAX_BLOCKS 8
+  uniform sampler2D blockAtlas;
+  uniform int       blockCount;
+  uniform vec3      blockCenter[MAX_BLOCKS];
+  uniform vec3      blockRight[MAX_BLOCKS];
+  uniform vec3      blockUp[MAX_BLOCKS];
+  uniform vec3      blockNormal[MAX_BLOCKS];
+  uniform vec2      blockSize[MAX_BLOCKS];     // map size in mm (w, h)
+  uniform vec4      blockRect[MAX_BLOCKS];     // atlas UV rect (u0, v0, du, dv)
+  uniform vec4      blockContent[MAX_BLOCKS];  // relief bbox in MAP UV (u0, v0, du, dv)
+  uniform float     blockAmp[MAX_BLOCKS];      // map amplitude in mm (max |depth|)
+
+  // Block b's map grey (0..1) at a model-space point; 'inside' = 1 within the
+  // content rect (the block owns its rectangle), else 0. UV is clamped into
+  // the map so the neutral border extends outward.
+  float blockGreyAt(int b, vec3 pos, out float inside) {
+    vec3 rel = pos - blockCenter[b];
+    float a  = dot(rel, blockRight[b]);
+    float bb = dot(rel, blockUp[b]);
+    float nd = dot(rel, blockNormal[b]);
+    vec2 uv = vec2((a + blockSize[b].x * 0.5) / blockSize[b].x,
+                   (bb + blockSize[b].y * 0.5) / blockSize[b].y);
+    vec4 c = blockContent[b];
+    // Off-plane band: the relief only applies near the plane the block was
+    // placed on. Mirrors displacement.js _blockSample. The band must reach
+    // down to a recessed pocket's floor (≈ map amplitude) and out far enough
+    // for the anchored curvature sagitta (≈ 0.15 × block size); without it
+    // every parallel surface with the same normal direction inside the
+    // block's rectangle (steps, counterbores, inner floors) gets the relief
+    // as well.
+    float band = max(max(1.5, 0.15 * max(blockSize[b].x, blockSize[b].y)) + 1.0,
+                     blockAmp[b] + 1.5);
+    inside = (uv.x >= c.x && uv.x <= c.x + c.z && uv.y >= c.y && uv.y <= c.y + c.w
+              && abs(nd) <= band) ? 1.0 : 0.0;
+    vec4 r = blockRect[b];
+    return texture2D(blockAtlas, r.xy + clamp(uv, 0.0, 1.0) * r.zw).r;
+  }
+
+  // Block b's face anchor at a point: smoothstep on the cosine between the
+  // face normal and the block normal (mirrors anchorFactor in brailleBlocks.js).
+  float blockAnchor(int b, vec3 faceN) {
+    return smoothstep(0.85, 0.95, dot(faceN, blockNormal[b]));
+  }
+
+  // Block b's raw signed height in mm (before the weight).
+  float blockHeightRaw(int b, vec3 pos) {
+    float inside;
+    float grey = blockGreyAt(b, pos, inside);
+    return (grey - 0.5) * 2.0 * blockAmp[b];
+  }
 
   const float PI     = 3.14159265358979;
   const float TWO_PI = 6.28318530717959;
@@ -304,6 +365,19 @@ const vertexShader = /* glsl */`
     if (useDisplacement == 1) {
       float h = compositeHeight(position, safeN, safeN, layerMask * layerFalloff * angleMask);
 
+      // Braille blocks fold over the texture layers (cover semantics): inside
+      // a block's content rect its map replaces everything below.
+      for (int b = 0; b < MAX_BLOCKS; b++) {
+        if (b >= blockCount) break;
+        float wb = blockAnchor(b, safeN);
+        if (wb > 0.0) {
+          float inside;
+          float grey = blockGreyAt(b, position, inside);
+          wb *= inside;
+          if (wb > 0.0) h = h * (1.0 - wb) + (grey - 0.5) * 2.0 * blockAmp[b] * wb;
+        }
+      }
+
       // Displace along smooth normal so all copies of the same position
       // arrive at the same point (watertight, no cracks).
       vec3 sN = length(smoothNormal) > 1e-6 ? normalize(smoothNormal) : safeN;
@@ -362,6 +436,25 @@ const fragmentShader = /* glsl */`
       dhy = dhy * (1.0 - wl) + gy * wl;
       coverSum = coverSum * (1.0 - wl) + wl;
     }
+  }
+
+  // Content-rect membership of the fragment's model position (1 inside, 0 out).
+  float blockInside(int b) {
+    float inside;
+    blockGreyAt(b, vModelPos, inside);
+    return inside;
+  }
+
+  // Block bump: same over-recurrence, driven by the block map's grey
+  // gradient. Straight-line per block (no loops) — see the ANGLE note above.
+  void bumpBlock(int b, vec3 PN, float wb, inout float dhx, inout float dhy, inout float coverSum) {
+    float inside;
+    float grey = blockGreyAt(b, vModelPos, inside);
+    float gx = dFdx(grey) * 2.0 * blockAmp[b];
+    float gy = dFdy(grey) * 2.0 * blockAmp[b];
+    dhx = dhx * (1.0 - wb) + gx * wb;
+    dhy = dhy * (1.0 - wb) + gy * wb;
+    coverSum = coverSum * (1.0 - wb) + wb;
   }
 
   void main() {
@@ -424,6 +517,16 @@ const fragmentShader = /* glsl */`
     if (layerCount > 1) bumpLayer(1, PN, w.y, dhx, dhy, coverSum);
     if (layerCount > 2) bumpLayer(2, PN, w.z, dhx, dhy, coverSum);
     if (layerCount > 3) bumpLayer(3, PN, w.w, dhx, dhy, coverSum);
+
+    // Braille blocks fold over the layers (same straight-line pattern).
+    if (blockCount > 0) bumpBlock(0, PN, blockAnchor(0, PN) * blockInside(0), dhx, dhy, coverSum);
+    if (blockCount > 1) bumpBlock(1, PN, blockAnchor(1, PN) * blockInside(1), dhx, dhy, coverSum);
+    if (blockCount > 2) bumpBlock(2, PN, blockAnchor(2, PN) * blockInside(2), dhx, dhy, coverSum);
+    if (blockCount > 3) bumpBlock(3, PN, blockAnchor(3, PN) * blockInside(3), dhx, dhy, coverSum);
+    if (blockCount > 4) bumpBlock(4, PN, blockAnchor(4, PN) * blockInside(4), dhx, dhy, coverSum);
+    if (blockCount > 5) bumpBlock(5, PN, blockAnchor(5, PN) * blockInside(5), dhx, dhy, coverSum);
+    if (blockCount > 6) bumpBlock(6, PN, blockAnchor(6, PN) * blockInside(6), dhx, dhy, coverSum);
+    if (blockCount > 7) bumpBlock(7, PN, blockAnchor(7, PN) * blockInside(7), dhx, dhy, coverSum);
     coverSum = clamp(coverSum, 0.0, 1.0);
 
     vec3 dp1 = dFdx(vViewPos);
@@ -486,7 +589,7 @@ const fragmentShader = /* glsl */`
     // compute the same lighting with that base.
     float userMask   = activeLayer == 0 ? vLayerMask.x : activeLayer == 1 ? vLayerMask.y : activeLayer == 2 ? vLayerMask.z : vLayerMask.w;
     float activeMask = activeLayer == 0 ? w.x : activeLayer == 1 ? w.y : activeLayer == 2 ? w.z : w.w;
-    float maskEffect = 1.0 - activeMask; // 0 = fully textured, 1 = fully masked
+    float maskEffect = layerCount == 0 ? 0.0 : 1.0 - activeMask; // 0 = fully textured, 1 = fully masked; no layers → no tint (Braille-only mode)
     // Any user-mask coverage (hard 0 or soft-brush fractions) tints in the
     // user colour; only fully unmasked pixels defer to the boundary type.
     float effectiveMaskType = mix(vMaskType, 0.0, step(0.001, 1.0 - userMask));
@@ -586,6 +689,30 @@ export function updateMaterial(material, layers, settings) {
   u.boundaryFalloffDist.value  = settings.boundaryFalloff ?? 0.0;
   u.boundaryFalloffCurve.value = FALLOFF_CURVE_INDEX[settings.boundaryFalloffCurve] ?? 0;
   u.layeredTint.value = settings.layeredTint ? 1 : 0;
+
+  // Braille blocks: settings.blocks = [{ desc, rect }] — desc from
+  // brailleBlocks.blockDescriptor, rect = the block's atlas UV rect.
+  const blocks = settings.blocks ?? [];
+  const nb = Math.min(blocks.length, MAX_BLOCKS);
+  u.blockCount.value = nb;
+  for (let i = 0; i < MAX_BLOCKS; i++) {
+    const B = i < nb ? blocks[i] : null;
+    const d = B?.desc;
+    if (d) {
+      u.blockCenter.value.set(d.center, i * 3);
+      u.blockRight.value.set(d.r, i * 3);
+      u.blockUp.value.set(d.u, i * 3);
+      u.blockNormal.value.set(d.n, i * 3);
+      u.blockSize.value[i * 2]     = d.widthMm;
+      u.blockSize.value[i * 2 + 1] = d.heightMm;
+      u.blockContent.value.set(d.contentUV, i * 4);
+      u.blockAmp.value[i] = d.amplitudeMm;
+      u.blockRect.value.set(B.rect, i * 4);
+    } else {
+      u.blockAmp.value[i] = 0;   // unused slot: no relief, no bump
+    }
+  }
+  if (settings.blockAtlas) u.blockAtlas.value = settings.blockAtlas;
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
@@ -624,6 +751,18 @@ function buildUniforms() {
     boundaryFalloffDist:  { value: 0.0 },
     boundaryFalloffCurve: { value: 0 },
     layeredTint:          { value: 0 },
+    // Braille blocks (see sharedGLSL) — filled by updateMaterial from
+    // settings.blocks.
+    blockAtlas:   { value: _fallbackTexture() },
+    blockCount:   { value: 0 },
+    blockCenter:  { value: new Float32Array(MAX_BLOCKS * 3) },
+    blockRight:   { value: new Float32Array(MAX_BLOCKS * 3) },
+    blockUp:      { value: new Float32Array(MAX_BLOCKS * 3) },
+    blockNormal:  { value: new Float32Array(MAX_BLOCKS * 3) },
+    blockSize:    { value: new Float32Array(MAX_BLOCKS * 2) },
+    blockRect:    { value: new Float32Array(MAX_BLOCKS * 4) },
+    blockContent: { value: new Float32Array(MAX_BLOCKS * 4) },
+    blockAmp:     { value: new Float32Array(MAX_BLOCKS) },
   };
 }
 

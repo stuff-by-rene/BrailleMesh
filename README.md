@@ -1,10 +1,13 @@
-# BumpMesh by CNC Kitchen
+# BrailleMesh
 
-**Live:** https://bumpmesh.com  
-**GitHub:** https://github.com/CNCKitchen/stlTexturizer
-**Author:** Stefan Hermann
+**Live:** https://stuff-by-rene.github.io/BrailleMesh/
 
-A browser-based tool for applying surface displacement textures to 3D meshes — no installation required.
+A browser-based tool for adding Braille reliefs and displacement textures to 3D meshes — no installation required.
+
+> **Fork of [BumpMesh by CNC Kitchen](https://github.com/CNCKitchen/stlTexturizer)** (AGPL-3.0).
+> BrailleMesh makes the Braille workspace the default and keeps the original texture
+> pipeline fully intact. Original author: Stefan Hermann — `LICENSE` and all copyright
+> headers remain unchanged.
 
 Load an STL, OBJ, 3MF, or STEP file, pick a texture, tune the parameters, and export a new displaced STL ready for slicing.
 

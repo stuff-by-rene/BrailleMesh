@@ -1,0 +1,13 @@
+{
+  "name": "braillemesh",
+  "private": true,
+  "type": "module",
+  "description": "BumpMesh by CNC Kitchen - dev/test dependencies only; the app itself runs from static files",
+  "scripts": {
+    "test": "node tests/zipStream.test.mjs && node tests/paintTree.test.mjs && node tests/exportStreaming.test.mjs && node tests/braille.test.mjs"
+  },
+  "devDependencies": {
+    "fflate": "0.8.2",
+    "three": "0.170.0"
+  }
+}
