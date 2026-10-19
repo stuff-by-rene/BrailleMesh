@@ -255,7 +255,7 @@ export default {
   "license.item5": "Er wordt <strong>geen ondersteuning</strong> geboden. De auteur is niet verplicht bugs te fixen, vragen te beantwoorden of deze tool bij te werken. Bugmeldingen en featureverzoeken zijn wel altijd welkom via <a href=\"mailto:texturizer@cnckitchen.com\">texturizer@cnckitchen.com</a>.",
   "license.item6": "De auteur is niet <strong>aansprakelijk</strong> voor schade, dataverlies of problemen die voortkomen uit het gebruik van deze tool.",
   "license.item7": "Wil je deze tool licentiëren of inbouwen voor je eigen bedrijf of website? Neem contact op via <a href=\"mailto:contact@cnckitchen.com\">contact@cnckitchen.com</a>.",
-  "license.item8": "Broncode beschikbaar op <a href=\"https://github.com/CNCKitchen/stlTexturizer\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
+  "license.item8": "Broncode beschikbaar op <a href=\"https://github.com/stuff-by-rene/BrailleMesh\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
   "imprint.btn": "Colofon & privacy",
   "imprint.title": "Colofon & privacybeleid",
   "imprint.sectionImprint": "Colofon (Impressum)",

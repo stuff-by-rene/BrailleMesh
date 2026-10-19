@@ -255,7 +255,7 @@ export default {
   "license.item5": "<strong>不提供</strong>技术支持。作者没有义务修复错误、回答问题或更新本工具。不过，欢迎随时将错误报告和功能请求发送至 <a href=\"mailto:texturizer@cnckitchen.com\">texturizer@cnckitchen.com</a>。",
   "license.item6": "对于因使用本工具而产生的任何损害、数据丢失或问题，作者<strong>不承担任何责任</strong>。",
   "license.item7": "想要为您的业务或网站获取许可或嵌入本工具？请通过 <a href=\"mailto:contact@cnckitchen.com\">contact@cnckitchen.com</a> 联系我们。",
-  "license.item8": "源代码可在 <a href=\"https://github.com/CNCKitchen/stlTexturizer\" target=\"_blank\" rel=\"noopener\">GitHub</a> 上获取。",
+  "license.item8": "源代码可在 <a href=\"https://github.com/stuff-by-rene/BrailleMesh\" target=\"_blank\" rel=\"noopener\">GitHub</a> 上获取。",
   "imprint.btn": "版权与隐私",
   "imprint.title": "版权与隐私政策",
   "imprint.sectionImprint": "版权声明 (Impressum)",

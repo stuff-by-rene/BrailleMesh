@@ -255,7 +255,7 @@ export default {
   "license.item5": "<strong>Підтримка не надається</strong>. Автор не зобов'язаний виправляти помилки, відповідати на запитання або оновлювати цей інструмент. Проте повідомлення про помилки та запити на нові функції завжди вітаються за адресою <a href=\"mailto:texturizer@cnckitchen.com\">texturizer@cnckitchen.com</a>.",
   "license.item6": "Автор не несе <strong>відповідальності</strong> за будь-які збитки, втрату даних або проблеми, що виникають через використання цього інструменту.",
   "license.item7": "Бажаєте ліцензувати або вбудувати цей інструмент у свій бізнес або на вебсайт? Зв'яжіться з нами: <a href=\"mailto:contact@cnckitchen.com\">contact@cnckitchen.com</a>.",
-  "license.item8": "Вихідний код доступний на <a href=\"https://github.com/CNCKitchen/stlTexturizer\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
+  "license.item8": "Вихідний код доступний на <a href=\"https://github.com/stuff-by-rene/BrailleMesh\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
   "imprint.btn": "Вихідні дані та Конфіденційність",
   "imprint.title": "Вихідні дані та Політика конфіденційності",
   "imprint.sectionImprint": "Вихідні дані (Impressum)",

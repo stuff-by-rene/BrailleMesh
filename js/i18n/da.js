@@ -255,7 +255,7 @@ export default {
   "license.item5": "<strong>Ingen support</strong> ydes. Forfatteren har intet krav at rette fejl, besvare spørgsmål eller opdatere dette værktøj. Det sagt, fejlrapporter og funktionsønsker er altid velkomne på <a href=\"mailto:texturizer@cnckitchen.com\">texturizer@cnckitchen.com</a>.",
   "license.item6": "Forfatteren kan ikke gøres <strong>ansvarlig</strong> for skader, datatab eller problemer fra brugen af dette værktøj.",
   "license.item7": "Vil du licensere eller indlejre dette værktøj til din egen virksomhed eller hjemmeside? Kontakt os på <a href=\"mailto:contact@cnckitchen.com\">contact@cnckitchen.com</a>.",
-  "license.item8": "Kildekoden er tilgængelig på <a href=\"https://github.com/CNCKitchen/stlTexturizer\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
+  "license.item8": "Kildekoden er tilgængelig på <a href=\"https://github.com/stuff-by-rene/BrailleMesh\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
   "imprint.btn": "Imprint & privatliv",
   "imprint.title": "Imprint & privatlivspolitik",
   "imprint.sectionImprint": "Imprint (Impressum)",

@@ -255,7 +255,7 @@ export default {
   "license.item5": "<strong>Aucun support</strong> n'est fourni. L'auteur n'a aucune obligation de corriger des bogues, de répondre à des questions ou de mettre à jour cet outil. Cela dit, les rapports de bogues et les demandes de fonctionnalités sont toujours les bienvenus à <a href=\"mailto:texturizer@cnckitchen.com\">texturizer@cnckitchen.com</a>.",
   "license.item6": "L'auteur ne saurait être tenu <strong>responsable</strong> d'aucun dommage, perte de données ou problème découlant de l'utilisation de cet outil.",
   "license.item7": "Vous souhaitez licencier ou intégrer cet outil pour votre entreprise ou site web ? Contactez-nous à <a href=\"mailto:contact@cnckitchen.com\">contact@cnckitchen.com</a>.",
-  "license.item8": "Code source disponible sur <a href=\"https://github.com/CNCKitchen/stlTexturizer\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
+  "license.item8": "Code source disponible sur <a href=\"https://github.com/stuff-by-rene/BrailleMesh\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
   "imprint.btn": "Mentions légales et confidentialité",
   "imprint.title": "Mentions légales et politique de confidentialité",
   "imprint.sectionImprint": "Mentions légales (Impressum)",

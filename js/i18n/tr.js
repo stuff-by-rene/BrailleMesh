@@ -255,7 +255,7 @@ export default {
   "license.item5": "Bu program için teknik destek <strong>verilmez.</strong> Geliştirici, soru cevaplamak, bug düzeltmek, ya da programı güncellemek gibi zorunluluklara sahip değildir. Ama bug raporları ve özellik talepleri için ulaşabilirsiniz: <a href=\"mailto:texturizer@cnckitchen.com\">texturizer@cnckitchen.com</a>.",
   "license.item6": "Bu aracın kullanılmasından doğabilecek herhangi bir hasar, veri kaybı veya sorundan geliştirici <strong>sorumlu</strong> tutulamaz.",
   "license.item7": "Bu aracı kendi işletmeniz veya web siteniz için lisanslamak veya sitenize gömmek mi istiyorsunuz? Bizimle iletişime geçin: <a href=\"mailto:contact@cnckitchen.com\">contact@cnckitchen.com</a>.",
-  "license.item8": "Kaynak koduna buradan ulaşabilirsiniz: <a href=\"https://github.com/CNCKitchen/stlTexturizer\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
+  "license.item8": "Kaynak koduna buradan ulaşabilirsiniz: <a href=\"https://github.com/stuff-by-rene/BrailleMesh\" target=\"_blank\" rel=\"noopener\">GitHub</a>.",
   "imprint.btn": "Künye ve Gizlilik",
   "imprint.title": "Künye ve Gizlilik Politikası",
   "imprint.sectionImprint": "Künye (Impressum)",

@@ -255,7 +255,7 @@ export default {
   "license.item5": "<strong>Käyttötukea ei tarjota.</strong> Tekijällä ei ole velvollisuutta korjata virheitä, vastata kysymyksiin tai päivittää työkalua. Virheraportit ja ominaisuustoiveet ovat silti aina tervetulleita osoitteeseen <a href=\"mailto:texturizer@cnckitchen.com\">texturizer@cnckitchen.com</a>.",
   "license.item6": "Tekijä ei ole <strong>vastuussa</strong> mistään työkalun käytöstä aiheutuvista vahingoista, tietojen menetyksestä tai ongelmista.",
   "license.item7": "Haluatko lisensoida tämän työkalun tai upottaa sen yrityksesi palveluun tai verkkosivustolle? Ota yhteyttä: <a href=\"mailto:contact@cnckitchen.com\">contact@cnckitchen.com</a>.",
-  "license.item8": "Lähdekoodi on saatavilla <a href=\"https://github.com/CNCKitchen/stlTexturizer\" target=\"_blank\" rel=\"noopener\">GitHubissa</a>.",
+  "license.item8": "Lähdekoodi on saatavilla <a href=\"https://github.com/stuff-by-rene/BrailleMesh\" target=\"_blank\" rel=\"noopener\">GitHubissa</a>.",
   "imprint.btn": "Julkaisijatiedot ja tietosuoja",
   "imprint.title": "Julkaisijatiedot ja tietosuojaseloste",
   "imprint.sectionImprint": "Julkaisijatiedot (Impressum)",
