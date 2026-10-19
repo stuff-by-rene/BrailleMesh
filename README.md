@@ -14,13 +14,13 @@ Load a model, type a word, place Braille on its surfaces, and export a print-rea
 ## Features
 
 ### Braille (default workspace)
-- **Text blocks** — type a word, pick one of 8 Braille systems (German Vollschrift/Kurzschrift, English UEB Grade 1/2, French, Spanish, Italian, Portuguese) and add it to the pool
-- **Place on the model** — drag a block onto any face; every placement keeps its own position, rotation and name, and the view swings to it on click
-- **Raised or embedded** — dots stand proud of the surface, or the whole block sits in one recessed frame with flush dot tops
-- **Readable black-print caption** — optionally engraved or embossed under each Braille line, for sighted readers
-- **Per-block parameters** — dot diameter/spacing/height/rounding, cell/word/row spacing, alignment, raster resolution
-- **Fully localized** — the whole Braille workspace (parameters, tooltips, pool) is translated in all 16 UI languages; the default Braille system follows the UI language unless you pick one explicitly
-- **Separate-part export** — in the exported 3MF the Braille is its own printable volume beside the base body, colourable independently in the slicer
+- **Text blocks** — type a word, pick one of 8 Braille systems and add it to the pool
+- **Place on the model** — drag a block onto any face; placements keep their own position, rotation and name
+- **Raised or embedded** — proud dots, or a recessed frame with flush dot tops
+- **Black-print caption** — readable print under each line, for sighted readers
+- **Per-block parameters** — dot size/spacing/height/rounding, alignment, raster resolution
+- **Fully localized** — the whole workspace is translated in all 16 UI languages
+- **Separate-part export** — the Braille is its own printable volume in the 3MF
 
 ### Textures
 - **101 built-in seamless textures** in eight categories (geometric, patterns, organic, fabric, natural, grip, molded, tires): weaves, knurling, carbon twill, chainmail, scales, bark, wood grain, cobblestone, Japandi flutes and ripples, mold grains (sand matte, VDI spark erosion, leather, haircell), tire treads (touring, mud-terrain, truck rib, tractor, loader), Hero Patterns and more
@@ -110,7 +110,7 @@ Load a model, type a word, place Braille on its surfaces, and export a print-rea
 
 BrailleMesh opens in the Braille workspace; the header toggle switches to the texture workspace and back.
 
-1. **Add a block** — type a word, pick the Braille system, click **Add**. Blocks collect in the pool; each holds its text, parameters and the generated dot layout.
+1. **Add a block** — type a word, pick the Braille system (German Vollschrift/Kurzschrift, English UEB Grade 1/2, French, Spanish, Italian, Portuguese) and click **Add**. Blocks collect in the pool; each holds its text, parameters and the generated dot layout. New blocks default to the system of the UI language — a system you pick explicitly stays.
 2. **Place it** — drag a block from the pool onto any face of the model: it snaps to that face. Click a placement to swing the view to it, rename it, or drag it along the face.
 3. **Tune it** — every block carries its own parameters: dot diameter, dot/cell/word/row spacing, dot height and rounding, alignment, raster resolution. Edits apply to all of the block's placements; changing a single placement detaches it into its own block.
 4. **Raised or embedded** — raised: dots stand proud of the surface. Embedded: the whole block sits in one recessed frame, dot tops flush with the surface.
