@@ -1164,6 +1164,10 @@ function populateLanguageSelector() {
     _scheduleCylinderPanelRedraw();
     gallery.refreshText();
     _renderLayerStrip();
+    // The Braille pool/editor bake their strings in at render time — re-render
+    // so a language switch reaches them too.
+    _renderBraillePool();
+    _renderBrailleEditor();
   });
 
   languageSelector.appendChild(select);
@@ -1203,7 +1207,7 @@ document.getElementById('theme-toggle').addEventListener('click', () => {
 
 // Favourites grid + texture gallery. Every preset is selectable right away (the full texture
 // loads on demand), so PRESETS is filled synchronously instead of waiting for thumbnails.
-const DEFAULT_PRESET_NAME = 'Crystal';
+const DEFAULT_PRESET_NAME = 'Crystal';   // kept for reference; no preset is auto-applied any more
 let _activePresetIdx = -1;   // preset picked most recently (set before its texture finishes loading)
 PRESETS = IMAGE_PRESETS.map(p => ({ name: p.name, defaultScale: p.defaultScale }));
 // Picks can come from the keyboard (gallery arrow keys), which the pointerup undo hook never sees.
@@ -1252,10 +1256,11 @@ queueMicrotask(async () => {
   if (persisted?.activeCustomId && await selectCustomTexture(persisted.activeCustomId, false)) return;
   if (activeMapEntry || _activePresetIdx >= 0) return;   // the user picked a map while the library loaded
 
-  const applyDefaults = !persistedName;
-  let targetIdx = persistedName ? IMAGE_PRESETS.findIndex(p => p.name === persistedName) : -1;
-  if (targetIdx < 0) targetIdx = IMAGE_PRESETS.findIndex(p => p.name === DEFAULT_PRESET_NAME);
-  if (targetIdx >= 0) selectPreset(targetIdx, applyDefaults);
+  // No default texture: a fresh visit leaves the example cube plain; only a
+  // map the user actually had active last session is restored.
+  if (!persistedName) return;
+  const targetIdx = IMAGE_PRESETS.findIndex(p => p.name === persistedName);
+  if (targetIdx >= 0) selectPreset(targetIdx, false);
 });
 
 // ── Preset grid ───────────────────────────────────────────────────────────────
@@ -1422,14 +1427,10 @@ if (customMapRemoveBtn) {
     _lastCustomMap = null;
     _hideCustomMapThumb();
     if (wasActive) {
-      // Fall back to the default preset so the viewer keeps a usable texture.
-      const idx = IMAGE_PRESETS.findIndex(p => p.name === DEFAULT_PRESET_NAME);
-      if (idx >= 0) {
-        selectPreset(idx, /*applyDefaults=*/false);
-      } else {
-        activeMapEntry = null;
-        updatePreview();
-      }
+      // No default texture: deleting the active custom map leaves the model plain.
+      activeMapEntry = null;
+      _clearPresetActive();
+      updatePreview();
     }
   });
 }
@@ -4856,12 +4857,7 @@ async function handleModelFile(file, stepSettings = null) {
       previewMaterial = null;
     }
 
-    // Auto-select the default preset on first load, unless a preset is already picked (its
-    // texture may still be loading) or a custom map is active.
-    if (!activeMapEntry && _activePresetIdx < 0) {
-      const idx = IMAGE_PRESETS.findIndex(p => p.name === DEFAULT_PRESET_NAME);
-      if (idx >= 0) selectPreset(idx);
-    }
+    // No default texture: a freshly loaded model stays plain until a texture is picked.
     mappingSelect.value = String(settings.mappingMode);
     capAngleRow.style.display = settings.mappingMode === 3 ? '' : 'none';
 
@@ -7044,7 +7040,7 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   snapSeamlessWrap: true,
   cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,
   cylinderPanelMinimized: false,
-  activeMapName: DEFAULT_PRESET_NAME,
+  activeMapName: null,
 });
 
 function resetSettingsToDefaults() {
@@ -7083,12 +7079,10 @@ function resetSettingsToDefaults() {
     _renderLayerStrip();
     if (currentGeometry) refreshExclusionOverlay();
 
-    const defaultIdx = IMAGE_PRESETS.findIndex(p => p.name === DEFAULT_PRESET_NAME);
-    if (defaultIdx >= 0) {
-      // applyDefaults=true so the preset's defaultScale overrides whatever
-      // scale the user had — matches the "fresh session" intent.
-      selectPreset(defaultIdx, true);
-    }
+    // No default texture: reset leaves the model plain until a texture is picked.
+    activeMapEntry = null;
+    _clearPresetActive();
+    updatePreview();
     try { sessionStorage.removeItem(PROJECT_STORAGE_KEY); } catch { /* ignore */ }
   } finally {
     _autoSavePaused = false;

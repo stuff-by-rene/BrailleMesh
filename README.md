@@ -26,9 +26,15 @@ Load an STL, OBJ, 3MF, or STEP file, pick a texture, tune the parameters, and ex
 - Mouse-wheel fine tuning of values
 - Quality of life improvements
 
-See the **[full changelog](https://bumpmesh.com/changelog.html)** for every update since April 2026.
-
 ## Features
+
+### Braille (default workspace)
+- **Text blocks** — type a word, pick one of 6 Braille systems (German Vollschrift/Kurzschrift, English UEB Grade 1/2, French, Spanish) and add it to the pool
+- **Place on the model** — drag a block onto any face; every placement keeps its own position, rotation and name, and the view swings to it on click
+- **Raised or embedded** — dots stand proud of the surface, or the whole block sits in one recessed frame with flush dot tops
+- **Readable black-print caption** — optionally engraved or embossed under each Braille line, for sighted readers
+- **Per-block parameters** — dot diameter/spacing/height/rounding, cell/word/row spacing, alignment, raster resolution
+- **Separate-part export** — the Braille stays a separate, colourable part in the exported STL
 
 ### Textures
 - **101 built-in seamless textures** in eight categories (geometric, patterns, organic, fabric, natural, grip, molded, tires): weaves, knurling, carbon twill, chainmail, scales, bark, wood grain, cobblestone, Japandi flutes and ripples, mold grains (sand matte, VDI spark erosion, leather, haircell), tire treads (touring, mud-terrain, truck rib, tractor, loader), Hero Patterns and more
@@ -101,16 +107,16 @@ See the **[full changelog](https://bumpmesh.com/changelog.html)** for every upda
 
 ### Other
 - **Light / Dark theme** — respects OS preference, persisted per browser
-- **Multilingual** — English and German UI with auto-detection
+- **Multilingual** — 16 languages with auto-detection
 
 ## Usage
 
 1. Open `index.html` in a modern browser (Chrome, Edge, Firefox, Safari).
-2. Drop a model onto the viewport or click **Load STL…** (supports STL, OBJ, 3MF).
-3. Select a texture preset from the sidebar (or upload a custom image).
-4. Choose a projection mode and adjust UV scale, offset, rotation, and amplitude.
+2. Drop a model onto the viewport or click **Load STL…** (supports STL, OBJ, 3MF, STEP).
+3. **Braille (default workspace)** — type a text, click **Add**, drag the block onto a face of the model and fine-tune it.
+4. **Textures** — switch with the header toggle, pick a preset or upload your own image, choose a projection mode and adjust UV scale, offset, rotation, and amplitude.
 5. Optionally mask or exclude surfaces with the angle sliders or paint tools.
-6. Click **Export STL** to download the displaced mesh.
+6. Export as STL or 3MF.
 
 > **Note:** All processing runs entirely in the browser — no data is uploaded to any server.
 
@@ -120,7 +126,7 @@ See the **[full changelog](https://bumpmesh.com/changelog.html)** for every upda
 index.html            # Main entry point
 style.css             # Styles (light / dark theme)
 logo.png              # Favicon & header logo
-CNAME                 # Custom domain (bumpmesh.com)
+dev-server.mjs        # Dev server (Cache-Control: no-cache)
 textures/             # Built-in JPG/PNG displacement map images (101 textures) + thumbs/
 js/
   main.js             # App bootstrap & UI wiring
@@ -139,7 +145,10 @@ js/
   meshIndex.js        # Shared vertex welding + integer-pair hash maps
   exclusion.js        # Face exclusion / inclusion painting
   exporter.js         # Binary STL export
-  i18n.js             # Translations (EN / DE)
+  i18n.js             # Translations (16 languages)
+  braille.js          # Braille tables + depth-map rasteriser (Braille workspace)
+  brailleBlocks.js    # Braille pool / editor / placements
+  brailleSolid.js     # Separate-part solid export for Braille
 ```
 
 ## Run Locally
@@ -148,11 +157,17 @@ All processing runs entirely in the browser — no backend or build step is need
 
 ```bash
 # Clone the repository
-git clone https://github.com/CNCKitchen/stlTexturizer.git
-cd stlTexturizer
+git clone https://github.com/stuff-by-rene/BrailleMesh.git
+cd BrailleMesh
 ```
 
 Then start any static file server from the project root. Pick whichever you have installed:
+
+**Node.js (included, recommended)**
+```bash
+node dev-server.mjs
+```
+Serves on http://localhost:8791 and sends `Cache-Control: no-cache`, so a plain reload always picks up the current files.
 
 **Python (3.x)**
 ```bash
@@ -176,7 +191,7 @@ php -S localhost:8000
 
 Open http://localhost:8000 in your browser and you're ready to go.
 
-> **Tip:** Any static server will work — the app has no server-side dependencies. After updating a local copy, hard-reload once (Ctrl+F5 / Cmd+Shift+R): most simple servers don't send cache headers, so the browser may otherwise mix new and old files.
+> **Tip:** Any static server will work — the app has no server-side dependencies. Most simple servers don't send cache headers, so after updating a local copy the browser may mix new and old files — the included `node dev-server.mjs` avoids that with `Cache-Control: no-cache`.
 
 **Docker / Podman**
 ```bash
