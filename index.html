@@ -296,7 +296,7 @@
           <div class="form-row slider-row">
             <label for="br-cell-spacing" data-i18n="braille.cellSpacing">Cell spacing (mm)</label>
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.cellSpacing"></span>
-            <button id="br-lock-cell-spacing" class="lock-btn active" data-i18n-title="braille.lockCellSpacing" title="Follows Dot spacing (×2.4 — standard proportions). Click the lock to set it independently." aria-pressed="true">
+            <button id="br-lock-cell-spacing" class="lock-btn active" data-i18n-title="braille.lockCellSpacing" title="Cell spacing: distance between cell centres. While locked it follows Dot spacing × 2.4 (standard: 2.5 mm → 6 mm). Click the lock to set it independently." aria-pressed="true">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" stroke-width="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" stroke-width="2"/></svg>
             </button>
             <input type="range" id="br-cell-spacing" min="3" max="10" step="0.1" value="6" />
@@ -306,7 +306,7 @@
           <div class="form-row slider-row">
             <label for="br-word-spacing" data-i18n="braille.wordSpacing">Word spacing (mm)</label>
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.wordSpacing"></span>
-            <button id="br-lock-word-spacing" class="lock-btn active" data-i18n-title="braille.lockWordSpacing" title="Follows Cell spacing (+2 mm word gap). Click the lock to set it independently." aria-pressed="true">
+            <button id="br-lock-word-spacing" class="lock-btn active" data-i18n-title="braille.lockWordSpacing" title="Word spacing: distance between cell centres across the word gap; the visible gap is word spacing − cell spacing (standard 2 mm). While locked it follows Cell spacing + 2 mm. Click the lock to set it independently." aria-pressed="true">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" stroke-width="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" stroke-width="2"/></svg>
             </button>
             <input type="range" id="br-word-spacing" min="2" max="15" step="0.1" value="8" />
@@ -316,7 +316,7 @@
           <div class="form-row slider-row">
             <label for="br-row-spacing" data-i18n="braille.rowSpacing">Row spacing (mm)</label>
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.rowSpacing"></span>
-            <button id="br-lock-row-spacing" class="lock-btn active" data-i18n-title="braille.lockRowSpacing" title="Follows Dot spacing (×4 — standard line pitch). Click the lock to set it independently." aria-pressed="true">
+            <button id="br-lock-row-spacing" class="lock-btn active" data-i18n-title="braille.lockRowSpacing" title="Row spacing: distance between Braille rows. While locked it follows Dot spacing × 4 (standard: 2.5 mm → 10 mm). Click the lock to set it independently." aria-pressed="true">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" stroke-width="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" stroke-width="2"/></svg>
             </button>
             <input type="range" id="br-row-spacing" min="4" max="20" step="0.1" value="10" />
@@ -347,7 +347,7 @@
           <div class="form-row slider-row" id="br-recess-depth-row">
             <label for="br-recess-depth" data-i18n="braille.recessDepth">Pocket depth (mm)</label>
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.recessDepth"></span>
-            <button id="br-lock-recess-depth" class="lock-btn active" data-i18n-title="braille.lockRecessDepth" title="Follows Dot height (dot tops flush with the surface). Click the lock to set it independently." aria-pressed="true">
+            <button id="br-lock-recess-depth" class="lock-btn active" data-i18n-title="braille.lockRecessDepth" title="Pocket depth: how deep the pocket sits below the surface. While locked it equals Dot height — dot tops flush with the surface. Click the lock to set it independently." aria-pressed="true">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" stroke-width="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" stroke-width="2"/></svg>
             </button>
             <input type="range" id="br-recess-depth" min="0.1" max="1.5" step="0.05" value="0.5" />
