@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { unzipSync, strFromU8 } from 'fflate';
-import { translateText, BRAILLE_DEFAULTS } from '../js/braille.js';
+import { translateText, BRAILLE_DEFAULTS, BR_LOCK_DEPS } from '../js/braille.js';
 import { blockFrame, anchorFactor, blockOffFlags, blockDescriptor, blockToPipelineLayer } from '../js/brailleBlocks.js';
 import { buildBrailleSolid } from '../js/brailleSolid.js';
 import { export3MFVolumes } from '../js/exporter.js';
@@ -275,4 +275,23 @@ test('export3MFVolumes: one volume per Braille block', async t => {
   assert.ok(xml.includes('<component objectid="2"/><component objectid="3"/><component objectid="4"/>'));
   assert.ok(xml.includes('<object id="3" type="model" name="Wort1">'));
   assert.ok(xml.includes('<object id="4" type="model" name="Wort2">'));
+});
+
+// ── Lock dependencies: standard proportions ──────────────────────────────────
+
+test('BR_LOCK_DEPS: the defaults already satisfy every locked ratio', () => {
+  for (const [child, dep] of Object.entries(BR_LOCK_DEPS)) {
+    const derived = dep.f(BRAILLE_DEFAULTS[dep.parent]);
+    assert.ok(
+      Math.abs(derived - BRAILLE_DEFAULTS[child]) < 1e-9,
+      `${child} default (${BRAILLE_DEFAULTS[child]}) should equal ${dep.parent} derived (${derived})`,
+    );
+  }
+});
+
+test('BR_LOCK_DEPS: derivation follows the parent value', () => {
+  assert.ok(Math.abs(BR_LOCK_DEPS.cellSpacing.f(3) - 7.2) < 1e-9);   // ×2.4
+  assert.equal(BR_LOCK_DEPS.wordSpacing.f(6), 8);     // +2 mm word gap
+  assert.equal(BR_LOCK_DEPS.rowSpacing.f(3), 12);     // ×4
+  assert.equal(BR_LOCK_DEPS.recessDepth.f(0.8), 0.8); // flush dot tops
 });

@@ -1485,6 +1485,10 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
 
 .lock-btn:hover { border-color: var(--accent-hover); }
 
+/* Locked (derived) parameter inputs follow their parent — greyed out. */
+.slider-row input[type="range"]:disabled,
+.slider-row .val:disabled { opacity: 0.45; cursor: default; }
+
 /* ── Lock row connector ───────────────────────────────────────────────────────── */
 .lock-row {
   display: flex;

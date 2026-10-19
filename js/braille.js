@@ -436,6 +436,19 @@ export const BRAILLE_DEFAULTS = {
                              // their own solid volume)
 };
 
+/**
+ * Standard-proportion dependencies between the parameters: while a parameter
+ * is LOCKED it derives its value from its parent (the ratios the defaults
+ * encode), so e.g. growing the dot spacing keeps the cell pitch proportional.
+ * The layout clamps (cell ≥ dot, word ≥ cell) stay as a safety net.
+ */
+export const BR_LOCK_DEPS = {
+  cellSpacing: { parent: 'dotSpacing', f: v => v * 2.4 },   // 2.5 → 6
+  wordSpacing: { parent: 'cellSpacing', f: v => v + 2 },    // 6 → 8 (2 mm word gap)
+  rowSpacing:  { parent: 'dotSpacing', f: v => v * 4 },     // 2.5 → 10
+  recessDepth: { parent: 'dotHeight', f: v => v },          // dot tops flush
+};
+
 const PAD_MM = 2.0;                 // neutral background margin around the block
 const MAX_MAP_SIDE = 4096;
 const MAX_MAP_PIXELS = 4096 * 4096;

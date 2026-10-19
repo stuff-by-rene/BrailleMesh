@@ -36,7 +36,7 @@ import { t, tHtml, initLang, setLang, getLang, applyTranslations, TRANSLATIONS }
 import { getScaleReferenceLengths } from './mapping.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
-import { generateBrailleMap, BRAILLE_DEFAULTS, BRAILLE_LANGUAGES } from './braille.js';
+import { generateBrailleMap, BRAILLE_DEFAULTS, BRAILLE_LANGUAGES, BR_LOCK_DEPS } from './braille.js';
 import { blockDescriptor, blockFrame, blockToPipelineLayer, packBlockAtlas, MAX_PREVIEW_BLOCKS } from './brailleBlocks.js';
 import { buildBrailleSolid } from './brailleSolid.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
@@ -515,6 +515,17 @@ for (const k of BR_PARAM_KEYS) {
     val:    document.getElementById('br-' + k.replace(/([A-Z])/g, '-$1').toLowerCase() + '-val'),
   };
 }
+// Lock buttons on the dependent parameter rows (same pattern as the texture
+// scale lock): locked = the value derives from its parent at the standard ratio.
+const brLockBtns = {};
+for (const k of Object.keys(BR_LOCK_DEPS)) {
+  brLockBtns[k] = document.getElementById('br-lock-' + k.replace(/([A-Z])/g, '-$1').toLowerCase());
+}
+const BR_DECIMALS = {
+  dotDiameter: 2, dotSpacing: 2, cellSpacing: 1, wordSpacing: 1, rowSpacing: 1,
+  dotHeight: 2, dotRounding: 2, recessMargin: 1, recessDepth: 2,
+  blackSize: 1, blackDepth: 2,
+};
 
 // ── Mesh diagnostics DOM refs ────────────────────────────────────────────────
 const meshDiagnostics    = document.getElementById('mesh-diagnostics');
@@ -2150,6 +2161,24 @@ function wireEvents() {
   braillePlaceBtn.addEventListener('click', () => _toggleBraillePlace(!braillePlaceActive));
   brailleLocalizeBtn.addEventListener('click', _localizeBrailleBlock);
   brailleResetBtn?.addEventListener('click', _resetBrailleParams);
+
+  // Lock buttons on the dependent parameter rows: locked = the value follows
+  // its parent at the standard ratio (BR_LOCK_DEPS), unlocked = free editing.
+  for (const child of Object.keys(BR_LOCK_DEPS)) {
+    brLockBtns[child]?.addEventListener('click', () => {
+      const B = braillePool[brailleActiveBlock];
+      if (!B) return;
+      _brailleEnsureLocks(B);
+      B.locks[child] = !B.locks[child];
+      if (B.locks[child]) {          // re-locking snaps to the standard ratio
+        _brailleApplyLocks(B, BR_LOCK_DEPS[child].parent);
+        updatePreview();
+      }
+      _renderBrailleEditor();
+      _autoSaveSettings();
+      _commitUndoCapture();
+    });
+  }
   brailleDeleteBlockBtn.addEventListener('click', () => _deleteBrailleBlock(brailleActiveBlock));
 
   // Info bubbles (i): one shared element, positioned near the icon (fixed →
@@ -2181,11 +2210,6 @@ function wireEvents() {
   export3mfPartBtn.addEventListener('click', () => handleExport3MFPart());
   // Per-block parameter sliders — the classic BumpMesh slider design, writing
   // into the active block's own parameter set.
-  const BR_DECIMALS = {
-    dotDiameter: 2, dotSpacing: 2, cellSpacing: 1, wordSpacing: 1, rowSpacing: 1,
-    dotHeight: 2, dotRounding: 2, recessMargin: 1, recessDepth: 2,
-    blackSize: 1, blackDepth: 2,
-  };
   for (const k of BR_PARAM_KEYS) {
     const { slider, val } = brSliders[k];
     if (!slider || !val) continue;
@@ -3284,6 +3308,7 @@ function _brailleSnapshot() {
       id: B.id, label: B.label, text: B.text,
       autoLang: B.autoLang !== false,
       params: { ...B.params },
+      locks: B.locks ? { ...B.locks } : undefined,
       placements: B.placements.map(pl => ({
         center: [...pl.center], normal: [...pl.normal], rotation: pl.rotation,
         name: pl.name,
@@ -3295,6 +3320,7 @@ function _brailleSnapshot() {
 function _restoreBrailleSnapshot(data) {
   braillePool = (data?.pool ?? []).map(B => ({
     id: B.id, label: B.label, text: B.text, params: { ...B.params },
+    locks: B.locks ? { ...B.locks } : undefined,
     autoLang: B.autoLang !== false,
     placements: (B.placements ?? []).map(pl => ({
       center: [...pl.center], normal: [...pl.normal], rotation: _normDeg(pl.rotation ?? 0),
@@ -3449,6 +3475,17 @@ function _renderBrailleEditor() {
     if (!slider || !val) continue;
     slider.value = B.params[k];
     val.value = B.params[k];
+  }
+
+  // Locks: reflect the state and disable the derived inputs while locked.
+  _brailleEnsureLocks(B);
+  for (const child of Object.keys(BR_LOCK_DEPS)) {
+    const locked = !!B.locks[child];
+    brLockBtns[child]?.classList.toggle('active', locked);
+    brLockBtns[child]?.setAttribute('aria-pressed', String(locked));
+    const { slider, val } = brSliders[child];
+    if (slider) slider.disabled = locked;
+    if (val) val.disabled = locked;
   }
 
   const pl = B.placements[brailleActivePlacement];
@@ -3661,11 +3698,56 @@ function _deleteBrailleBlock(i) {
   _commitUndoCapture();
 }
 
+/** Lock states for the dependent parameters. Missing lock state (old snapshots,
+ *  undo captures) is derived from the values: a block whose values already
+ *  match the standard proportions stays locked, customised values stay free. */
+function _brailleDefaultLocks(params) {
+  const locks = {};
+  for (const [child, dep] of Object.entries(BR_LOCK_DEPS)) {
+    const { slider } = brSliders[child];
+    const lo = parseFloat(slider?.min ?? '0'), hi = parseFloat(slider?.max ?? '1e9');
+    const derived = Math.max(lo, Math.min(hi, dep.f(params[dep.parent])));
+    locks[child] = Math.abs((params[child] ?? derived) - derived) < 0.051;
+  }
+  return locks;
+}
+
+/** Blocks from old snapshots / undo captures carry no lock state yet. */
+function _brailleEnsureLocks(B) {
+  if (!B.locks) B.locks = _brailleDefaultLocks(B.params);
+  return B.locks;
+}
+
+/** While a parameter is locked it follows its parent at the standard ratio:
+ *  write the derived value into the block and its slider/number inputs.
+ *  Chains propagate (dot spacing → cell spacing → word spacing); the guard
+ *  bounds the walk, the dependency graph is a shallow forest. */
+function _brailleApplyLocks(B, parentKey) {
+  let key = parentKey;
+  for (let guard = 0; guard < Object.keys(BR_LOCK_DEPS).length; guard++) {
+    let next = null;
+    for (const [child, dep] of Object.entries(BR_LOCK_DEPS)) {
+      if (dep.parent !== key || !B.locks?.[child]) continue;
+      const { slider, val } = brSliders[child];
+      const lo = parseFloat(slider?.min ?? '0'), hi = parseFloat(slider?.max ?? '1e9');
+      const dv = Math.max(lo, Math.min(hi, dep.f(B.params[key])));
+      const rounded = parseFloat(dv.toFixed(BR_DECIMALS[child] ?? 2));
+      B.params[child] = rounded;
+      if (slider) slider.value = rounded;
+      if (val) val.value = rounded.toFixed(BR_DECIMALS[child] ?? 2);
+      if (!next) next = child;
+    }
+    if (!next) break;
+    key = next;
+  }
+}
+
 /** Write one parameter to the active block; the map regenerates from the key. */
 function _setBrailleParam(key, v) {
   const B = braillePool[brailleActiveBlock];
   if (!B) return;
   B.params[key] = v;
+  _brailleApplyLocks(B, key);   // locked children follow at the standard ratio
   updatePreview();
 }
 
@@ -3847,6 +3929,7 @@ function _resetBrailleParams() {
   const B = braillePool[brailleActiveBlock];
   if (!B) return;
   B.params = { ...BRAILLE_DEFAULTS, language: brailleLangSelect?.value || 'en' };
+  B.locks = _brailleDefaultLocks(B.params);   // back to the standard proportions
   B.autoLang = true;   // re-derived from the default select — auto again
   _renderBraillePool();
   _renderBrailleEditor();
@@ -3868,6 +3951,7 @@ function _localizeBrailleBlock() {
     label: `${B.label} (${n})`,
     text: B.text,
     params: { ...B.params },
+    locks: B.locks ? { ...B.locks } : undefined,
     placements: [pl],
     autoLang: B.autoLang !== false,
   };
