@@ -158,19 +158,21 @@ export function applyTranslations() {
 }
 
 /**
- * Start in the language the user last picked (localStorage), else English.
- * The browser's locale is deliberately NOT auto-detected — English is the
- * default for first-time visitors. Call once at startup.
+ * Detect language from localStorage or the browser, load translation files,
+ * and apply. Call once at startup.
  *
  * Returns { enFailed: boolean } — true when even the English base file could
  * not be loaded. The UI will still render but show raw translation keys instead
  * of text. The caller should surface a visible warning in this case.
  */
 export async function initLang() {
-  const saved = localStorage.getItem('stlt-lang');
+  const saved   = localStorage.getItem('stlt-lang');
+  const browser = navigator.language.split('-')[0];
 
   if (saved && TRANSLATIONS[saved]) {
     _currentLang = saved;
+  } else if (TRANSLATIONS[browser]) {
+    _currentLang = browser;
   } else {
     _currentLang = 'en';
   }
