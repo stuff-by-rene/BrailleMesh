@@ -1489,6 +1489,29 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
 .slider-row input[type="range"]:disabled,
 .slider-row .val:disabled { opacity: 0.45; cursor: default; }
 
+/* Per-parameter reset arrow (PrusaSlicer-style): bare icon, only visible
+   while the value differs from the default (toggled via .hidden). */
+.br-reset-btn {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.br-reset-btn:hover { color: var(--accent); }
+.br-reset-btn.hidden { display: none; }
+
+/* Caption parameter rows only show while the caption is enabled. */
+#br-black-rows.hidden { display: none; }
+
 /* ── Lock row connector ───────────────────────────────────────────────────────── */
 .lock-row {
   display: flex;

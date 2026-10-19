@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { unzipSync, strFromU8 } from 'fflate';
 import { translateText, BRAILLE_DEFAULTS, BR_LOCK_DEPS } from '../js/braille.js';
 import { blockFrame, anchorFactor, blockOffFlags, blockDescriptor, blockToPipelineLayer } from '../js/brailleBlocks.js';
-import { buildBrailleSolid } from '../js/brailleSolid.js';
+import { buildBrailleSolid, buildCaptionSolid } from '../js/brailleSolid.js';
 import { export3MFVolumes } from '../js/exporter.js';
 import { applyDisplacementLayers } from '../js/displacement.js';
 import { subdivide } from '../js/subdivision.js';
@@ -294,4 +294,70 @@ test('BR_LOCK_DEPS: derivation follows the parent value', () => {
   assert.equal(BR_LOCK_DEPS.wordSpacing.f(6), 8);     // +2 mm word gap
   assert.equal(BR_LOCK_DEPS.rowSpacing.f(3), 12);     // ×4
   assert.equal(BR_LOCK_DEPS.recessDepth.f(0.8), 0.8); // flush dot tops
+});
+
+// ── Caption solid (black print as its own volume) ────────────────────────────
+
+/** Fake map with a caption mask; px=10 → 1 px = 0.1 mm, map 2×2 mm. */
+function captionBlock(alpha, w, h, relief = 'emboss') {
+  const map = {
+    px: 10, width: 20, height: 20, widthMm: 2, heightMm: 2,
+    amplitudeMm: 0.4, contentRect: { x0: 0, y0: 0, x1: 2, y1: 2 },
+    dots: [],
+    caption: { alpha, w, h, x0: 0, y0: 0, depth: 0.4 },
+  };
+  return { map, params: { ...BRAILLE_DEFAULTS, blackShow: true, blackRelief: relief } };
+}
+
+/** Signed volume via the divergence theorem — positive for outward winding. */
+function signedVolume(pos) {
+  let v = 0;
+  for (let t = 0; t < pos.length / 9; t++) {
+    const o = t * 9;
+    const ax = pos[o], ay = pos[o+1], az = pos[o+2];
+    const bx = pos[o+3], by = pos[o+4], bz = pos[o+5];
+    const cx = pos[o+6], cy = pos[o+7], cz = pos[o+8];
+    v += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+  }
+  return v;
+}
+
+function edgeSharedTwice(pos) {
+  const key = (x, y, z) => `${x.toFixed(5)},${y.toFixed(5)},${z.toFixed(5)}`;
+  const edges = new Map();
+  for (let t = 0; t < pos.length / 9; t++) {
+    const o = t * 9;
+    const v = [key(pos[o], pos[o+1], pos[o+2]), key(pos[o+3], pos[o+4], pos[o+5]), key(pos[o+6], pos[o+7], pos[o+8])];
+    for (let e = 0; e < 3; e++) {
+      const a = v[e], b = v[(e + 1) % 3];
+      const k = a < b ? a + '|' + b : b + '|' + a;
+      edges.set(k, (edges.get(k) ?? 0) + 1);
+    }
+  }
+  return [...edges.values()].every(n => n === 2);
+}
+
+test('buildCaptionSolid: extrudes the glyph mask as one closed box', () => {
+  const solid = buildCaptionSolid(captionBlock(new Uint8Array([255, 255, 255, 255]), 2, 2),
+    { center: [0, 0, 0], normal: [0, 0, 1], rotation: 0 });
+  assert.equal(solid.length, 12 * 9);            // one box = 12 triangles
+  assert.ok(edgeSharedTwice(solid), 'box must be closed (every edge in 2 faces)');
+  assert.ok(signedVolume(solid) > 0, 'outward winding → positive signed volume');
+  // 2×2 px at 10 px/mm on a 2 mm map: a ∈ [−1, −0.8], z ∈ [−0.4(embed), 0.4]
+  const xs = [...solid].filter((_, i) => i % 3 === 0);
+  assert.ok(Math.abs(Math.min(...xs) + 1) < 1e-6 && Math.abs(Math.max(...xs) + 0.8) < 1e-6);
+});
+
+test('buildCaptionSolid: identical adjacent rows extend their boxes', () => {
+  const solid = buildCaptionSolid(captionBlock(new Uint8Array([255, 0, 255, 255, 0, 255]), 3, 2),
+    { center: [0, 0, 0], normal: [0, 0, 1], rotation: 0 });
+  assert.equal(solid.length, 2 * 12 * 9);        // two 1-px runs, both 2 rows tall → 2 boxes
+  assert.ok(edgeSharedTwice(solid), 'boxes must be closed');
+  assert.ok(signedVolume(solid) > 0, 'outward winding → positive signed volume');
+});
+
+test('buildCaptionSolid: engraved captions stay in the base (no solid)', () => {
+  const solid = buildCaptionSolid(captionBlock(new Uint8Array([255, 255, 255, 255]), 2, 2, 'engrave'),
+    { center: [0, 0, 0], normal: [0, 0, 1], rotation: 0 });
+  assert.equal(solid.length, 0);
 });

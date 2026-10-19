@@ -467,15 +467,23 @@ function dotRow(d) { return (d <= 6 ? (d - 1) % 3 : 3) + 1; }   // 1-based, top 
 
 /**
  * Rasterise the Braille block.
- * @param {object} p  parameters (see BRAILLE_DEFAULTS; mm units)
- * @returns {null | { canvas, imageData, width, height, widthMm, heightMm,
+ * @param {object} p  parameters (see BRAILLE_DEFAULTS; mm units). Options:
+ *   pocketsOnly — record the dots but don't rasterise them (recessed base of
+ *   the separate-part export). captionOnly — dots recorded but not rasterised,
+ *   only the caption relief is baked (raised base carrying an engraved
+ *   caption). omitCaption — the caption is skipped entirely (its own solid
+ *   volume carries it instead).
+ * @returns {null | { canvas, imageData, width, height, px, widthMm, heightMm,
  *                    amplitudeMm, lineCount, unknownChars, unicode,
- *                    contentRect, dots, pocketRect }}
+ *                    contentRect, dots, pocketRect, caption }}
  *   contentRect: { x0, y0, x1, y1 } bounding box of the actual relief in map
  *   millimetres (x from the map's left edge, y from its BOTTOM edge) — the
  *   preview shader's block weight is 1 inside it and 0 outside.
  *   dots: [{ x, y, r, h }] dot centres in the same coordinates (for the
  *   separate-part solid export). pocketRect: the recessed frame, same coords.
+ *   caption: { alpha, w, h, x0, y0, depth } cropped glyph-coverage mask of the
+ *   black-print caption (canvas-px frame, x0/y0 = crop origin) for the
+ *   caption's own solid volume; null when disabled or omitted.
  */
 export function generateBrailleMap(p) {
   const params = { ...BRAILLE_DEFAULTS, ...p };
@@ -681,7 +689,7 @@ export function generateBrailleMap(p) {
     const cx = toPxX(centreXMm);
     const cy = toPxY(centreYMm);
     dots.push({ x: centreXMm + PAD_MM, y: heightMm - centreYMm - PAD_MM, r, h: dotH });
-    if (params.pocketsOnly) return;   // record the dot, don't rasterise it
+    if (params.pocketsOnly || params.captionOnly) return;   // record the dot, don't rasterise it
     for (let sy = 0; sy < stampSize; sy++) {
       const pyy = Math.round(cy) - stampR + sy;
       if (pyy < 0 || pyy >= H) continue;
@@ -714,7 +722,8 @@ export function generateBrailleMap(p) {
   // path reads imageData, and the content rect below has to include it or
   // the shader's block mask would suppress it.
   const blackReliefDepth = params.blackShow ? Math.max(0.05, params.blackDepth) : 0;
-  if (params.blackShow) {
+  let caption = null;
+  if (params.blackShow && !params.omitCaption) {
     const fontPx = (Math.max(0.2, params.blackSize) / 0.72) * px;
     const mask = document.createElement('canvas');
     mask.width = W; mask.height = H;
@@ -742,6 +751,31 @@ export function generateBrailleMap(p) {
         depth[i] = emboss ? Math.max(depth[i], blackReliefDepth * a)
                           : Math.min(depth[i], -blackReliefDepth * a);
       }
+    }
+    // Cropped glyph-coverage mask for the caption's own solid volume (the
+    // "eigenes Teil" export extrudes it; engraved captions stay in the base).
+    let mx0 = Infinity, my0 = Infinity, mx1 = -Infinity, my1 = -Infinity;
+    for (let py = 0; py < H; py++) {
+      const row = py * W;
+      for (let pxx = 0; pxx < W; pxx++) {
+        if (maskData[(row + pxx) * 4 + 3] > 0) {
+          if (pxx < mx0) mx0 = pxx;
+          if (pxx > mx1) mx1 = pxx;
+          if (py < my0) my0 = py;
+          if (py > my1) my1 = py;
+        }
+      }
+    }
+    if (mx0 < Infinity) {
+      const bw = mx1 - mx0 + 1, bh = my1 - my0 + 1;
+      const alpha = new Uint8Array(bw * bh);
+      for (let py = 0; py < bh; py++) {
+        const srcRow = (my0 + py) * W;
+        for (let pxx = 0; pxx < bw; pxx++) {
+          alpha[py * bw + pxx] = maskData[(srcRow + mx0 + pxx) * 4 + 3];
+        }
+      }
+      caption = { alpha, w: bw, h: bh, x0: mx0, y0: my0, depth: blackReliefDepth };
     }
   }
 
@@ -790,10 +824,10 @@ export function generateBrailleMap(p) {
   ).join('\n');
 
   return {
-    canvas, imageData, width: W, height: H,
+    canvas, imageData, width: W, height: H, px,
     widthMm, heightMm, amplitudeMm: amp,
     lineCount: lines.length, unknownChars: unknown, unicode,
-    contentRect, dots, pocketRect,
+    contentRect, dots, pocketRect, caption,
     params: { ...params },
   };
 }

@@ -38,7 +38,7 @@ import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
 import { generateBrailleMap, BRAILLE_DEFAULTS, BRAILLE_LANGUAGES, BR_LOCK_DEPS } from './braille.js';
 import { blockDescriptor, blockFrame, blockToPipelineLayer, packBlockAtlas, MAX_PREVIEW_BLOCKS } from './brailleBlocks.js';
-import { buildBrailleSolid } from './brailleSolid.js';
+import { buildBrailleSolid, buildCaptionSolid } from './brailleSolid.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -521,6 +521,13 @@ const brLockBtns = {};
 for (const k of Object.keys(BR_LOCK_DEPS)) {
   brLockBtns[k] = document.getElementById('br-lock-' + k.replace(/([A-Z])/g, '-$1').toLowerCase());
 }
+// Per-parameter reset arrows (PrusaSlicer-style): visible only while the
+// value differs from the default; clicking restores just that parameter.
+const brResetBtns = {};
+document.querySelectorAll('.br-reset-btn[data-key]').forEach(btn => {
+  const k = btn.dataset.key;
+  if (k in BRAILLE_DEFAULTS) brResetBtns[k] = btn;
+});
 const BR_DECIMALS = {
   dotDiameter: 2, dotSpacing: 2, cellSpacing: 1, wordSpacing: 1, rowSpacing: 1,
   dotHeight: 2, dotRounding: 2, recessMargin: 1, recessDepth: 2,
@@ -2179,6 +2186,9 @@ function wireEvents() {
       _commitUndoCapture();
     });
   }
+  for (const k of Object.keys(brResetBtns)) {
+    brResetBtns[k].addEventListener('click', () => _resetBrailleParam(k));
+  }
   brailleDeleteBlockBtn.addEventListener('click', () => _deleteBrailleBlock(brailleActiveBlock));
 
   // Info bubbles (i): one shared element, positioned near the icon (fixed →
@@ -3210,16 +3220,17 @@ function _brailleMapKey(p) {
  *  The text MUST be part of the key: two blocks with identical params but
  *  different text otherwise share one cache entry and the model renders the
  *  first block's braille for both. */
-function _brailleBlockKey(B, pocketsOnly = false) {
-  return _brailleMapKey(B.params) + '|t=' + B.text + (pocketsOnly ? '+po' : '');
+function _brailleBlockKey(B, pocketsOnly = false, captionOnly = false, omitCaption = false) {
+  return _brailleMapKey(B.params) + '|t=' + B.text
+    + (pocketsOnly ? '+po' : '') + (captionOnly ? '+co' : '') + (omitCaption ? '+oc' : '');
 }
 
 /** The block's depth map, regenerated from params or text when they changed. */
-function _brailleMapFor(B, pocketsOnly = false) {
-  const key = _brailleBlockKey(B, pocketsOnly);
+function _brailleMapFor(B, pocketsOnly = false, captionOnly = false, omitCaption = false) {
+  const key = _brailleBlockKey(B, pocketsOnly, captionOnly, omitCaption);
   let map = _brailleMapCache.get(key);
   if (!map) {
-    map = generateBrailleMap({ ...B.params, text: B.text, pocketsOnly });
+    map = generateBrailleMap({ ...B.params, text: B.text, pocketsOnly, captionOnly, omitCaption });
     if (map) {
       _brailleMapCache.set(key, map);
       while (_brailleMapCache.size > 48) {
@@ -3279,16 +3290,35 @@ function _previewBlocks() {
   return { list, atlasTex: atlas.texture };
 }
 
-/** Block placements as pipeline pseudo-layers. baseOnly: recessed blocks
- *  contribute their pockets-only maps (the separate-part base body), raised
- *  blocks are omitted entirely (they become their own solid volume). */
+/** Block placements as pipeline pseudo-layers. baseOnly: the base carries
+ *  only what stays baked — recessed pockets (caption omitted when it becomes
+ *  its own volume) and engraved captions; raised dots and embossed captions
+ *  are separate solid volumes instead. */
 function _blockPipelineLayers(positions, { baseOnly = false } = {}) {
   const out = [];
   for (const B of braillePool) {
     if (!B.placements.length) continue;
+    const recessed = B.params.mode === 'recessed';
+    const embossedCaption = B.params.blackShow && B.params.blackRelief === 'emboss';
+    const engravedCaption = B.params.blackShow && !embossedCaption;
     for (const pl of B.placements) {
-      if (baseOnly && B.params.mode !== 'recessed') continue;
-      const map = _brailleMapFor(B, baseOnly && B.params.mode === 'recessed');
+      if (baseOnly) {
+        // The base carries only what stays baked: recessed pockets (caption
+        // omitted when it becomes its own volume) and engraved captions
+        // (a recess cannot be a positive volume). Raised dots and embossed
+        // captions are separate volumes instead.
+        if (recessed) {
+          const map = _brailleMapFor(B, true, false, embossedCaption);
+          if (!map) continue;
+          out.push(blockToPipelineLayer({ ...B, map }, pl, positions));
+        } else if (engravedCaption) {
+          const map = _brailleMapFor(B, false, true, false);
+          if (!map) continue;
+          out.push(blockToPipelineLayer({ ...B, map }, pl, positions));
+        }
+        continue;
+      }
+      const map = _brailleMapFor(B);
       if (!map) continue;
       out.push(blockToPipelineLayer({ ...B, map }, pl, positions));
     }
@@ -3487,6 +3517,7 @@ function _renderBrailleEditor() {
     if (slider) slider.disabled = locked;
     if (val) val.disabled = locked;
   }
+  _brailleSyncResetArrows(B);
 
   const pl = B.placements[brailleActivePlacement];
   _syncBraillePlacementEditor(B, pl);
@@ -3742,12 +3773,41 @@ function _brailleApplyLocks(B, parentKey) {
   }
 }
 
+/** Per-parameter reset arrows: visible only while the value differs from the
+ *  default and the input is editable (locked children follow their parent). */
+function _brailleSyncResetArrows(B) {
+  for (const k of Object.keys(brResetBtns)) {
+    const { slider, val } = brSliders[k];
+    const disabled = !!(slider?.disabled || val?.disabled);
+    const changed = Math.abs((B?.params[k] ?? BRAILLE_DEFAULTS[k]) - BRAILLE_DEFAULTS[k]) > 1e-6;
+    brResetBtns[k].classList.toggle('hidden', disabled || !changed);
+  }
+}
+
+/** Reset ONE parameter to its default (the row's reset arrow). Locked
+ *  children of this parameter re-derive; everything else stays. */
+function _resetBrailleParam(k) {
+  const B = braillePool[brailleActiveBlock];
+  if (!B || !(k in BRAILLE_DEFAULTS)) return;
+  const d = BRAILLE_DEFAULTS[k];
+  B.params[k] = d;
+  _brailleApplyLocks(B, k);
+  const { slider, val } = brSliders[k];
+  if (slider) slider.value = d;
+  if (val) val.value = Number(d).toFixed(BR_DECIMALS[k] ?? 2);
+  _brailleSyncResetArrows(B);
+  updatePreview();
+  _autoSaveSettings();
+  _commitUndoCapture();
+}
+
 /** Write one parameter to the active block; the map regenerates from the key. */
 function _setBrailleParam(key, v) {
   const B = braillePool[brailleActiveBlock];
   if (!B) return;
   B.params[key] = v;
   _brailleApplyLocks(B, key);   // locked children follow at the standard ratio
+  _brailleSyncResetArrows(B);
   updatePreview();
 }
 
@@ -4018,6 +4078,23 @@ function _buildBrailleSolidParts() {
     let o = 0;
     for (const c of chunks) { out.set(c, o); o += c.length; }
     parts.push({ name: B.label || 'Braille', positions: out });
+    // Embossed captions become their own colourable volume; engraved ones
+    // stay baked into the base (a recess is not a positive volume).
+    if (B.params.blackShow && B.params.blackRelief === 'emboss' && map.caption) {
+      const cch = [];
+      let ct = 0;
+      for (const pl of B.placements) {
+        const solid = buildCaptionSolid({ ...B, map }, pl);
+        cch.push(solid);
+        ct += solid.length;
+      }
+      if (ct) {
+        const cout = new Float32Array(ct);
+        let co = 0;
+        for (const c of cch) { cout.set(c, co); co += c.length; }
+        parts.push({ name: `${B.label || 'Braille'} (${t('braille.captionShort')})`, positions: cout });
+      }
+    }
   }
   return parts;
 }
@@ -4047,7 +4124,8 @@ async function handleExport3MFPart() {
     // restore — applyDisplacement has no map to sample otherwise.
     const hasBaseRelief = _hasTexturedLayer()
       || braillePool.some(B => B.placements.length
-        && (B.params.mode === 'recessed' || B.params.blackShow));
+        && (B.params.mode === 'recessed'
+          || (B.params.blackShow && B.params.blackRelief !== 'emboss')));
     let basePositions, baseNormals = null;
     if (hasBaseRelief) {
       const inputs = _pipelineInputs({ baseOnly: true });

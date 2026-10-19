@@ -402,6 +402,8 @@ export default {
   "braille.lockWordSpacing": "Follows Cell spacing (+2 mm word gap). Click the lock to set it independently.",
   "braille.lockRowSpacing": "Follows Dot spacing (×4 — standard line pitch). Click the lock to set it independently.",
   "braille.lockRecessDepth": "Follows Dot height (dot tops flush with the surface). Click the lock to set it independently.",
+  "braille.resetParamTitle": "Back to the default value",
+  "braille.captionShort": "caption",
   "braille.tt.dotHeight": "Dot height above the surface in mm",
   "braille.tt.dotRounding": "Rounded outer edge of each dot in mm; 0 = sharp",
   "braille.tt.recessMargin": "Distance from the outermost dots to the pocket frame edge",

@@ -163,3 +163,85 @@ export function buildBrailleSolid(block, placement, opts = {}) {
 
   return new Float32Array(out);
 }
+
+/**
+ * Build one placement's black-print caption solid — the EMBOSSED caption as
+ * its own printable volume, extruded from the map's glyph-coverage mask
+ * (map.caption). Engraved captions are recesses in the base body and stay
+ * baked there — a recess cannot be a positive volume — so the caller only
+ * invokes this for embossed captions.
+ * @param {object} block   pool block with .map (generateBrailleMap result incl. .caption) and .params
+ * @param {object} placement { center, normal, rotation }
+ * @param {object} [opts]  { embed = 0.4, threshold = 128 }
+ * @returns {Float32Array} triangle soup (9 floats per triangle)
+ */
+export function buildCaptionSolid(block, placement, opts = {}) {
+  const embed = Math.max(0.05, opts.embed ?? 0.4);
+  const THRESH = opts.threshold ?? 128;
+
+  const map = block.map;
+  const cap = map?.caption;
+  const params = block.params ?? {};
+  if (!cap || (params.blackRelief ?? 'engrave') !== 'emboss') return new Float32Array(0);
+
+  const d = blockDescriptor(block, placement);
+  const px = map.px || (map.width / map.widthMm);
+  const zTop = Math.max(0.05, cap.depth);
+  const zBottom = -embed;
+
+  // Merge the glyph mask into rectangles: per-row runs, extended downward
+  // while the span repeats — a few boxes instead of thousands of pixel cells.
+  const boxes = [];
+  let open = new Map();                       // span key → { x0, y0, x1, y1 } (mask px)
+  for (let ry = 0; ry < cap.h; ry++) {
+    const row = ry * cap.w;
+    const seen = new Map();
+    let runStart = -1;
+    for (let rx = 0; rx <= cap.w; rx++) {
+      const on = rx < cap.w && cap.alpha[row + rx] > THRESH;
+      if (on && runStart < 0) runStart = rx;
+      if (!on && runStart >= 0) {
+        const key = runStart + ':' + rx;
+        const prev = open.get(key);
+        if (prev) { prev.y1 = ry + 1; seen.set(key, prev); }
+        else seen.set(key, { x0: runStart, y0: ry, x1: rx, y1: ry + 1 });
+        open.delete(key);
+        runStart = -1;
+      }
+    }
+    for (const box of open.values()) boxes.push(box);
+    open = seen;
+  }
+  for (const box of open.values()) boxes.push(box);
+
+  const out = [];
+  const push = (...v) => out.push(...v);
+  for (const box of boxes) {
+    // Mask px → block-local millimetres, same frame as the dots
+    // (x from the map's left edge, y from its bottom edge, centred).
+    const a0 = (cap.x0 + box.x0) / px - map.widthMm / 2;
+    const a1 = (cap.x0 + box.x1) / px - map.widthMm / 2;
+    const b1 = map.heightMm - (cap.y0 + box.y0) / px - map.heightMm / 2;   // top edge
+    const b0 = map.heightMm - (cap.y0 + box.y1) / px - map.heightMm / 2;   // bottom edge
+    const v = [
+      [a0, b0, zBottom], [a1, b0, zBottom], [a1, b1, zBottom], [a0, b1, zBottom],
+      [a0, b0, zTop],    [a1, b0, zTop],    [a1, b1, zTop],    [a0, b1, zTop],
+    ];
+    const w = (i) => {
+      const [a, b, z] = v[i];
+      return [
+        d.center[0] + d.r[0] * a + d.u[0] * b + d.n[0] * z,
+        d.center[1] + d.r[1] * a + d.u[1] * b + d.n[1] * z,
+        d.center[2] + d.r[2] * a + d.u[2] * b + d.n[2] * z,
+      ];
+    };
+    // 12 triangles, outward winding (r × u = n, like the dot solids).
+    for (const q of [[4, 5, 6, 7], [0, 3, 2, 1], [1, 2, 6, 5], [0, 4, 7, 3], [3, 7, 6, 2], [0, 1, 5, 4]]) {
+      const P = w(q[0]), Q = w(q[1]), R = w(q[2]), S = w(q[3]);
+      push(...P, ...Q, ...R);
+      push(...P, ...R, ...S);
+    }
+  }
+
+  return new Float32Array(out);
+}

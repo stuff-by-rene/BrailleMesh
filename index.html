@@ -284,12 +284,14 @@
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.dotDiameter"></span>
             <input type="range" id="br-dot-diameter" min="1" max="3" step="0.05" value="1.6" />
             <input type="number" class="val" id="br-dot-diameter-val" value="1.6" min="1" max="3" step="0.05" data-wheel-decimals="2" />
+            <button class="br-reset-btn" data-key="dotDiameter" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div class="form-row slider-row">
             <label for="br-dot-spacing" data-i18n="braille.dotSpacing">Dot spacing (mm)</label>
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.dotSpacing"></span>
             <input type="range" id="br-dot-spacing" min="1.5" max="4" step="0.05" value="2.5" />
             <input type="number" class="val" id="br-dot-spacing-val" value="2.5" min="1.5" max="4" step="0.05" data-wheel-decimals="2" />
+            <button class="br-reset-btn" data-key="dotSpacing" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div class="form-row slider-row">
             <label for="br-cell-spacing" data-i18n="braille.cellSpacing">Cell spacing (mm)</label>
@@ -299,6 +301,7 @@
             </button>
             <input type="range" id="br-cell-spacing" min="3" max="10" step="0.1" value="6" />
             <input type="number" class="val" id="br-cell-spacing-val" value="6" min="3" max="10" step="0.1" data-wheel-decimals="1" />
+            <button class="br-reset-btn" data-key="cellSpacing" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div class="form-row slider-row">
             <label for="br-word-spacing" data-i18n="braille.wordSpacing">Word spacing (mm)</label>
@@ -308,6 +311,7 @@
             </button>
             <input type="range" id="br-word-spacing" min="2" max="15" step="0.1" value="8" />
             <input type="number" class="val" id="br-word-spacing-val" value="8" min="2" max="15" step="0.1" data-wheel-decimals="1" />
+            <button class="br-reset-btn" data-key="wordSpacing" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div class="form-row slider-row">
             <label for="br-row-spacing" data-i18n="braille.rowSpacing">Row spacing (mm)</label>
@@ -317,24 +321,28 @@
             </button>
             <input type="range" id="br-row-spacing" min="4" max="20" step="0.1" value="10" />
             <input type="number" class="val" id="br-row-spacing-val" value="10" min="4" max="20" step="0.1" data-wheel-decimals="1" />
+            <button class="br-reset-btn" data-key="rowSpacing" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div class="form-row slider-row">
             <label for="br-dot-height" data-i18n="braille.dotHeight">Dot height (mm)</label>
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.dotHeight"></span>
             <input type="range" id="br-dot-height" min="0.2" max="1.2" step="0.05" value="0.5" />
             <input type="number" class="val" id="br-dot-height-val" value="0.5" min="0.2" max="1.2" step="0.05" data-wheel-decimals="2" />
+            <button class="br-reset-btn" data-key="dotHeight" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div class="form-row slider-row">
             <label for="br-dot-rounding" data-i18n="braille.dotRounding">Dot rounding (mm)</label>
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.dotRounding"></span>
             <input type="range" id="br-dot-rounding" min="0" max="1.5" step="0.05" value="0.75" />
             <input type="number" class="val" id="br-dot-rounding-val" value="0.75" min="0" max="1.5" step="0.05" data-wheel-decimals="2" />
+            <button class="br-reset-btn" data-key="dotRounding" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div class="form-row slider-row" id="br-recess-margin-row">
             <label for="br-recess-margin" data-i18n="braille.recessMargin">Pocket margin (mm)</label>
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.recessMargin"></span>
             <input type="range" id="br-recess-margin" min="1" max="6" step="0.1" value="3" />
             <input type="number" class="val" id="br-recess-margin-val" value="3" min="1" max="6" step="0.1" data-wheel-decimals="1" />
+            <button class="br-reset-btn" data-key="recessMargin" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
           <div class="form-row slider-row" id="br-recess-depth-row">
             <label for="br-recess-depth" data-i18n="braille.recessDepth">Pocket depth (mm)</label>
@@ -344,6 +352,7 @@
             </button>
             <input type="range" id="br-recess-depth" min="0.1" max="1.5" step="0.05" value="0.5" />
             <input type="number" class="val" id="br-recess-depth-val" value="0.5" min="0.1" max="1.5" step="0.05" data-wheel-decimals="2" />
+            <button class="br-reset-btn" data-key="recessDepth" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
 
           <div class="form-row">
@@ -359,12 +368,14 @@
               <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.blackSize"></span>
               <input type="range" id="br-black-size" min="2" max="10" step="0.1" value="4" />
               <input type="number" class="val" id="br-black-size-val" value="4" min="2" max="10" step="0.1" data-wheel-decimals="1" />
+              <button class="br-reset-btn" data-key="blackSize" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             </div>
             <div class="form-row slider-row">
               <label for="br-black-depth" data-i18n="braille.blackDepth">Caption depth (mm)</label>
               <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.blackDepth"></span>
               <input type="range" id="br-black-depth" min="0.1" max="1" step="0.05" value="0.4" />
               <input type="number" class="val" id="br-black-depth-val" value="0.4" min="0.1" max="1" step="0.05" data-wheel-decimals="2" />
+              <button class="br-reset-btn" data-key="blackDepth" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             </div>
             <div class="form-row">
               <span class="form-row-label" data-i18n="braille.blackRelief">Caption relief</span>

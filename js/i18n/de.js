@@ -402,6 +402,8 @@ export default {
   "braille.lockWordSpacing": "Folgt dem Zellenabstand (+2 mm Wortabstand). Klick aufs Schloss zum freien Einstellen.",
   "braille.lockRowSpacing": "Folgt dem Punktabstand (×4 — Standardzeilenabstand). Klick aufs Schloss zum freien Einstellen.",
   "braille.lockRecessDepth": "Folgt der Punkthöhe (Punktoberseiten bündig mit der Oberfläche). Klick aufs Schloss zum freien Einstellen.",
+  "braille.resetParamTitle": "Auf den Standardwert zurücksetzen",
+  "braille.captionShort": "Schwarzschrift",
   "braille.tt.dotHeight": "Punkthöhe über der Oberfläche in mm",
   "braille.tt.dotRounding": "Runde Außenkante der Punkte in mm; 0 = scharf",
   "braille.tt.recessMargin": "Abstand von den äußersten Punkten zur Taschenkante",

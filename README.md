@@ -17,7 +17,7 @@ Load a model, type a word, place Braille on its surfaces, and export a print-rea
 - **Text blocks** — type a word, pick one of 8 Braille systems and add it to the pool
 - **Place on the model** — drag a block onto any face; placements keep their own position, rotation and name
 - **Raised or embedded** — proud dots, or a recessed frame with flush dot tops
-- **Black-print caption** — readable print under each line, for sighted readers
+- **Black-print caption** — readable print under each line, for sighted readers; embossed captions export as their own colourable volume
 - **Per-block parameters** — dot size/spacing/height/rounding, alignment, raster resolution
 - **Fully localized** — the whole workspace is translated in all 16 UI languages
 - **Separate-part export** — the Braille is its own printable volume in the 3MF
@@ -117,10 +117,10 @@ BrailleMesh opens in the Braille workspace; the header toggle switches to the te
 
 1. **Add a block** — type a word, pick the Braille system (German Vollschrift/Kurzschrift, English UEB Grade 1/2, French, Spanish, Italian, Portuguese) and click **Add**. Blocks collect in the pool; each holds its text, parameters and the generated dot layout. New blocks default to the system of the UI language — a system you pick explicitly stays.
 2. **Place it** — drag a block from the pool onto any face of the model: it snaps to that face. Click a placement to swing the view to it, rename it, or drag it along the face.
-3. **Tune it** — every block carries its own parameters: dot diameter, dot/cell/word/row spacing, dot height and rounding, alignment, raster resolution. Edits apply to all of the block's placements; changing a single placement detaches it into its own block. Dependent parameters carry a lock: cell/word/row spacing and pocket depth follow their parent parameter at the standard ratio while locked — click the lock to set them independently. **Reset parameters** (editor footer) restores every default.
+3. **Tune it** — every block carries its own parameters: dot diameter, dot/cell/word/row spacing, dot height and rounding, alignment, raster resolution. Edits apply to all of the block's placements; changing a single placement detaches it into its own block. Dependent parameters carry a lock: cell/word/row spacing and pocket depth follow their parent parameter at the standard ratio while locked — click the lock to set them independently. Changed values show a small reset arrow that restores just that parameter; **Reset parameters** (editor footer) restores every default.
 4. **Raised or embedded** — raised: dots stand proud of the surface. Embedded: the whole block sits in one recessed frame, dot tops flush with the surface.
 5. **Black-print caption** — optionally write the word as readable black print under each Braille line (raised or engraved), so sighted readers can check it.
-6. **Export** — in the exported 3MF the Braille is a separate printable volume beside the base body; STL export carries the relief in the surface.
+6. **Export** — in the exported 3MF the Braille is a separate printable volume beside the base body, and an embossed caption becomes its own colourable volume too (engraved captions stay in the base — a recess cannot be a separate part); STL export carries the relief in the surface.
 
 The example cube starts without a texture; the map you had active in your last session is restored automatically.
 
