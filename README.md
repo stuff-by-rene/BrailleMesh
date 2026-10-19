@@ -93,7 +93,7 @@ Load a model, type a word, place Braille on its surfaces, and export a print-rea
 
 ### Other
 - **Light / Dark theme** — respects OS preference, persisted per browser
-- **Multilingual** — 16 languages with auto-detection
+- **Multilingual** — 16 languages, English by default; your choice is remembered
 
 ## Usage
 
