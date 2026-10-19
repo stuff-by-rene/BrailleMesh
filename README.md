@@ -22,6 +22,9 @@ Load a model, type a word, place Braille on its surfaces, and export a print-rea
 - **Fully localized** — the whole workspace is translated in all 16 UI languages
 - **Separate-part export** — the Braille is its own printable volume in the 3MF
 
+<details>
+<summary><b>More features — texture workspace, viewer & file support (BumpMesh base)</b></summary>
+
 ### Textures
 - **101 built-in seamless textures** in eight categories (geometric, patterns, organic, fabric, natural, grip, molded, tires): weaves, knurling, carbon twill, chainmail, scales, bark, wood grain, cobblestone, Japandi flutes and ripples, mold grains (sand matte, VDI spark erosion, leather, haircell), tire treads (touring, mud-terrain, truck rib, tractor, loader), Hero Patterns and more
 - **Texture Gallery** — browse, search and filter the full catalogue in a side panel that takes the settings sidebar's place and stays open while you try textures on the model (click or arrow keys; the model spins on a turntable while you browse); star favorites to pin them in the panel grid, which grows by a row per 4 (saved in the browser)
@@ -95,6 +98,8 @@ Load a model, type a word, place Braille on its surfaces, and export a print-rea
 - **Light / Dark theme** — respects OS preference, persisted per browser
 - **Multilingual** — 16 languages with auto-detection
 
+</details>
+
 ## Usage
 
 1. Open `index.html` in a modern browser (Chrome, Edge, Firefox, Safari).
@@ -119,7 +124,10 @@ BrailleMesh opens in the Braille workspace; the header toggle switches to the te
 
 The example cube starts without a texture; the map you had active in your last session is restored automatically.
 
-## Project Structure
+<details>
+<summary><b>Technical details — project structure, local setup, dependencies, texture credits</b></summary>
+
+### Project Structure
 
 ```
 index.html            # Main entry point
@@ -150,7 +158,7 @@ js/
   brailleSolid.js     # Separate-part solid export for Braille
 ```
 
-## Run Locally
+### Run Locally
 
 All processing runs entirely in the browser — no backend or build step is needed. You just need a local HTTP server because browsers block ES module imports and texture loading from `file://` URLs.
 
@@ -198,7 +206,7 @@ docker compose up -d      # or: podman-compose -f podman-compose.yaml up -d
 ```
 Serves the app on http://localhost:8080. To change the port or container name, copy `.env.example` to `.env` and edit it.
 
-## Dependencies
+### Dependencies
 
 Loaded via CDN ([jsDelivr](https://www.jsdelivr.com/)) — no build step or npm install needed:
 
@@ -213,11 +221,13 @@ Loaded via CDN ([jsDelivr](https://www.jsdelivr.com/)) — no build step or npm 
 
 All dependencies are MIT-licensed.
 
-## Texture Credits
+### Texture Credits
 
 - Textures marked **HP** in the gallery are based on [Hero Patterns](https://heropatterns.com/) by Steve Schoger, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The SVG patterns were rasterised and converted to seamless heightmaps.
 - Textures marked **CC0** come from [ambientCG](https://ambientcg.com/) and [Poly Haven](https://polyhaven.com/) and are in the public domain (CC0 1.0). Thank you to both projects.
 - Textures marked **FF** (Basket, Brick, Bubble, Crystal, Leather 2, Weave 3) were made with [Filter Forge](https://www.filterforge.com/).
+
+</details>
 
 ## License
 
