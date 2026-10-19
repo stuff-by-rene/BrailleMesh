@@ -34,6 +34,7 @@ Load an STL, OBJ, 3MF, or STEP file, pick a texture, tune the parameters, and ex
 - **Raised or embedded** — dots stand proud of the surface, or the whole block sits in one recessed frame with flush dot tops
 - **Readable black-print caption** — optionally engraved or embossed under each Braille line, for sighted readers
 - **Per-block parameters** — dot diameter/spacing/height/rounding, cell/word/row spacing, alignment, raster resolution
+- **Fully localized** — the whole Braille workspace (parameters, tooltips, pool) is translated in all 16 UI languages; the default Braille system follows the UI language unless you pick one explicitly
 - **Separate-part export** — in the exported 3MF the Braille is its own printable volume beside the base body, colourable independently in the slicer
 
 ### Textures

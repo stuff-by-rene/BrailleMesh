@@ -1164,10 +1164,14 @@ function populateLanguageSelector() {
     _scheduleCylinderPanelRedraw();
     gallery.refreshText();
     _renderLayerStrip();
-    // The Braille pool/editor bake their strings in at render time — re-render
-    // so a language switch reaches them too.
+    // The Braille pool/editor bake their strings in at render time — refresh
+    // the system selects and re-render so a language switch reaches them too.
+    // Blocks still on the auto default follow the UI language; systems the
+    // user picked explicitly stay untouched.
+    const brFollowed = _brailleFollowUiLanguage();
     _renderBraillePool();
     _renderBrailleEditor();
+    if (brFollowed) { updatePreview(); _autoSaveSettings(); }
   });
 
   languageSelector.appendChild(select);
@@ -3278,6 +3282,7 @@ function _brailleSnapshot() {
     mode: brailleMode,
     pool: braillePool.map(B => ({
       id: B.id, label: B.label, text: B.text,
+      autoLang: B.autoLang !== false,
       params: { ...B.params },
       placements: B.placements.map(pl => ({
         center: [...pl.center], normal: [...pl.normal], rotation: pl.rotation,
@@ -3290,6 +3295,7 @@ function _brailleSnapshot() {
 function _restoreBrailleSnapshot(data) {
   braillePool = (data?.pool ?? []).map(B => ({
     id: B.id, label: B.label, text: B.text, params: { ...B.params },
+    autoLang: B.autoLang !== false,
     placements: (B.placements ?? []).map(pl => ({
       center: [...pl.center], normal: [...pl.normal], rotation: _normDeg(pl.rotation ?? 0),
       name: pl.name,
@@ -3360,6 +3366,23 @@ function _populateBrailleLangSelects() {
     }
     if (sel === brailleLangSelect) sel.value = defaultSystem;
   }
+}
+
+/** After a UI language change: the new-block select follows the UI language,
+ *  and pool blocks that still carry the auto default follow it too. Blocks
+ *  whose system the user chose explicitly (autoLang === false) stay. Returns
+ *  true if any block's system changed. */
+function _brailleFollowUiLanguage() {
+  _populateBrailleLangSelects();
+  const def = brailleLangSelect?.value || 'en';
+  let changed = false;
+  for (const B of braillePool) {
+    if (B.autoLang !== false && B.params.language !== def) {
+      B.params.language = def;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function _renderBraillePool() {
@@ -3597,7 +3620,7 @@ function _addBrailleBlock() {
   if (!text) return;
   const params = { ...BRAILLE_DEFAULTS, language: brailleLangSelect?.value || 'en' };
   const label = text.split(/\r?\n/)[0].trim().slice(0, 24) || 'Braille';
-  braillePool.push({ id: ++_brailleSeq, label, text, params, placements: [] });
+  braillePool.push({ id: ++_brailleSeq, label, text, params, placements: [], autoLang: true });
   brailleTextInput.value = '';
   brailleActiveBlock = braillePool.length - 1;
   brailleActivePlacement = -1;
@@ -3661,6 +3684,7 @@ function _setBrailleLanguage(v) {
   const B = braillePool[brailleActiveBlock];
   if (!B) return;
   B.params.language = v;
+  B.autoLang = false;   // explicit choice — no longer follows the UI language
   updatePreview();
   _autoSaveSettings();
 }
@@ -3823,6 +3847,7 @@ function _resetBrailleParams() {
   const B = braillePool[brailleActiveBlock];
   if (!B) return;
   B.params = { ...BRAILLE_DEFAULTS, language: brailleLangSelect?.value || 'en' };
+  B.autoLang = true;   // re-derived from the default select — auto again
   _renderBraillePool();
   _renderBrailleEditor();
   updatePreview();
@@ -3844,6 +3869,7 @@ function _localizeBrailleBlock() {
     text: B.text,
     params: { ...B.params },
     placements: [pl],
+    autoLang: B.autoLang !== false,
   };
   B.placements.splice(brailleActivePlacement, 1);
   braillePool.push(nb);
