@@ -15,6 +15,8 @@
 // (full-baked export); the separate-part export keeps them as own volumes.
 
 import { weldVertices } from './meshIndex.js';
+import { THREE } from './threeCompat.js';
+import { countEdgeDefects, resolveTJunctions } from './meshRepair.js';
 
 let _modulePromise = null;
 
@@ -48,24 +50,38 @@ export async function cutPockets(positions, cuts, unions = []) {
   const M = await manifoldModule();
 
   const welded = _weldSoup(positions, 1e4);
-  let base;
+  let base = null;
   try {
     base = new M.Manifold(welded);
   } catch (e) {
     // Imported meshes often carry float-noise cracks or sliver gaps that defeat
     // the tight weld — retry coarser (0.001 mm, then 0.01 mm grid) before
     // giving up; the coarse weld merges near-duplicate vertices.
-    base = null;
     for (const decimals of [1e3, 1e2]) {
       try {
         base = new M.Manifold(_weldSoup(positions, decimals));
         break;
-      } catch (e2) { /* try the next coarser grid */ }
+      } catch { /* try the next coarser grid */ }
     }
     if (!base) {
-      console.warn(
-        `pocketCut: base mesh is not watertight/manifold (${positions.length / 3} tris) — skipping cut`, e);
-      return { positions, cut: false };
+      // Last resort: the app's own repair (weld + drop needle faces + seal
+      // T-junctions from mismatched tessellations), then retry. This rescues
+      // STEP/STL imports whose surfaces meet in T-junctions; real holes stay
+      // broken and fall through to the soft-pocket fallback.
+      try {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const fixed = resolveTJunctions(geo, { maxIters: 8 });
+        base = new M.Manifold(_weldSoup(fixed.attributes.position.array, 1e4));
+        console.info('pocketCut: T-junction repair applied, cut proceeding');
+      } catch (e2) {
+        const probe = new THREE.BufferGeometry();
+        probe.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const d = countEdgeDefects(probe);
+        console.warn(
+          `pocketCut: base mesh not watertight (${d.open} open edges, ${d.nonManifold} non-manifold edges, ${d.tris} tris) — exporting soft pocket`, e2);
+        return { positions, cut: false };
+      }
     }
   }
 

@@ -27,13 +27,14 @@ const FRAME = {
 };
 const RECT = { x0: 0.5, y0: 0.6, x1: 1.5, y1: 1.4, r: 0.2 };   // map mm → block-local a ∈ [−0.5, 0.5], b ∈ [−0.4, 0.4]
 
+const onWallPlane = (x, y) =>
+  (Math.abs(Math.abs(x) - 0.5) < 1e-4 && Math.abs(y) <= 0.4 + 1e-4)
+  || (Math.abs(Math.abs(y) - 0.4) < 1e-4 && Math.abs(x) <= 0.5 + 1e-4);
+
 test('cutPockets: vertical walls and exact floor on a cube', async () => {
   const { positions: out, cut } = await cutPockets(cubeSoup(), [{ frame: FRAME, rect: RECT, depth: 0.5 }]);
   assert.equal(cut, true, 'the cut ran');
   assert.ok(out.length > 0);
-  const onWallPlane = (x, y) =>
-    (Math.abs(Math.abs(x) - 0.5) < 1e-4 && Math.abs(y) <= 0.4 + 1e-4)
-    || (Math.abs(Math.abs(y) - 0.4) < 1e-4 && Math.abs(x) <= 0.5 + 1e-4);
   let floor = 0, rim = 0, floorEdge = 0, sloped = 0;
   for (let i = 0; i < out.length; i += 3) {
     const x = out[i], y = out[i + 1], z = out[i + 2];
@@ -76,6 +77,40 @@ test('cutPockets: non-manifold input falls back to the unchanged soup', async ()
   const { positions: out, cut } = await cutPockets(bad, [{ frame: FRAME, rect: RECT, depth: 0.5 }]);
   assert.equal(out.length, bad.length);
   assert.equal(cut, false, 'the fallback reports cut=false');
+});
+
+test('cutPockets: T-junction crack is repaired and the cut proceeds', async () => {
+  // Same cube, but the y=-1 face is split at M(0,-1,1) — a vertex lying ON the
+  // top face's edge 0-1, which does not use it. That T-junction makes the mesh
+  // non-watertight; the repair pass must seal it so the cut can run.
+  const V = [
+    -1,-1, 1,  1,-1, 1,  1, 1, 1,  -1, 1, 1,
+    -1,-1,-1,  1,-1,-1,  1, 1,-1,  -1,1,-1,
+    0,-1, 1,                                                        // 8 = M
+  ];
+  const F = [
+    [0,1,2],[0,2,3], [4,7,6],[4,6,5], [1,5,6],[1,6,2],
+    [0,3,7],[0,7,4], [3,2,6],[3,6,7], [0,4,5],[0,5,8],[8,5,1],
+  ];
+  const soup = [];
+  for (const [a, b, c] of F) soup.push(...V.slice(a * 3, a * 3 + 3), ...V.slice(b * 3, b * 3 + 3), ...V.slice(c * 3, c * 3 + 3));
+  const { positions: out, cut } = await cutPockets(new Float32Array(soup), [{ frame: FRAME, rect: RECT, depth: 0.5 }]);
+  assert.equal(cut, true, 'repair rescued the T-junction, cut ran');
+  // Wall = the flat planes OR the corner arcs: distance to the rounded-rect
+  // outline (a ∈ [−0.5, 0.5], b ∈ [−0.4, 0.4], r = 0.2) must be ~0.
+  const wallDist = (x, y) => {
+    const qx = Math.abs(x) - 0.3, qy = Math.abs(y) - 0.2;
+    return Math.hypot(Math.max(qx, 0), Math.max(qy, 0))
+      + Math.min(Math.max(qx, qy), 0) - 0.2;
+  };
+  let floor = 0, sloped = 0;
+  for (let i = 0; i < out.length; i += 3) {
+    const x = out[i], y = out[i + 1], z = out[i + 2];
+    if (Math.abs(z + 0.5) < 1e-5) floor++;
+    else if (z < -1e-5 && z > -0.5 + 1e-5 && Math.abs(wallDist(x, y)) > 1e-4) sloped++;
+  }
+  assert.ok(floor > 0, 'pocket floor exists');
+  assert.equal(sloped, 0, 'no vertex off the wall surface between surface and floor');
 });
 
 /** Axis-aligned closed box as a soup (12 triangles, outward winding). */
