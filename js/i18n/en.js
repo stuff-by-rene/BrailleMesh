@@ -228,6 +228,7 @@ export default {
   "tooltips.outputTriangles": "Mesh is fully subdivided first, then decimated down to this count",
   "warnings.safetyCapHit": "⚠ Triangle safety cap hit during subdivision — result may still be coarser than requested edge length.",
   "warnings.preserveOverBudget": "⚠ Untextured surfaces alone exceed the triangle limit — they were preserved, so the export is over the limit.",
+  "warnings.pocketCutFailed": "⚠ Pocket walls could not be cut geometrically (mesh not watertight) — pockets were exported soft.",
   "warnings.softwareRendering": "⚠ 3D is being rendered on the CPU — hardware acceleration is off or unavailable in this browser, so the viewer will be slow. Turn on “Use graphics acceleration when available” in the browser settings and restart it; chrome://gpu should then list WebGL as “Hardware accelerated”. On laptops with several GPUs, set the browser to “High performance” in the OS graphics settings.",
   "ui.exportStl": "Export STL",
   "ui.export3mf": "Export 3MF",

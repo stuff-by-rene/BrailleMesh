@@ -472,9 +472,7 @@ function dotRow(d) { return (d <= 6 ? (d - 1) % 3 : 3) + 1; }   // 1-based, top 
  *   the separate-part export). captionOnly — dots recorded but not rasterised,
  *   only the caption relief is baked (raised base carrying an engraved
  *   caption). omitCaption — the caption is skipped entirely (its own solid
- *   volume carries it instead). omitPocket — the recessed frame is not
- *   rasterised (pocketRect is still reported); the exports cut it
- *   geometrically instead (pocketCut.js) for true vertical walls.
+ *   volume carries it instead).
  * @returns {null | { canvas, imageData, width, height, px, widthMm, heightMm,
  *                    amplitudeMm, lineCount, unknownChars, unicode,
  *                    contentRect, dots, pocketRect, caption }}
@@ -612,9 +610,10 @@ export function generateBrailleMap(p) {
     if (dTop < Infinity) {
       // Hard-walled pocket: full depth inside a rounded-rect footprint, 1-px
       // cliff at the wall. The preview shader shades it sharp (per-pixel
-      // normals); the exports cut the same footprint geometrically
-      // (pocketCut.js) for true vertical walls — a raster ramp could only
-      // ever displace vertices into a sloped, rounded wall.
+      // normals). The exports cut the same footprint geometrically
+      // (pocketCut.js) for true vertical walls; if that cut fails (mesh not
+      // watertight), this rasterised cliff stays as the fallback — a steep,
+      // slightly jagged wall instead of no pocket at all.
       const rimX0 = toPxX(dLeft - recessMargin), rimX1 = toPxX(dRight + recessMargin);
       const rimY0 = toPxY(dTop - recessMargin), rimY1 = toPxY(dBot + recessMargin);
       const rad = Math.max(1, Math.min(0.4 * px, (rimX1 - rimX0) / 2, (rimY1 - rimY0) / 2));   // px
@@ -624,23 +623,21 @@ export function generateBrailleMap(p) {
         y0: heightMm - rimY1 / px, y1: heightMm - rimY0 / px,
         r: rad / px,
       };
-      if (!params.omitPocket) {
-        const px0 = Math.max(0, Math.floor(rimX0));
-        const px1 = Math.min(W - 1, Math.ceil(rimX1));
-        const py0 = Math.max(0, Math.floor(rimY0));
-        const py1 = Math.min(H - 1, Math.ceil(rimY1));
-        const ix0 = rimX0 + rad, ix1 = rimX1 - rad, iy0 = rimY0 + rad, iy1 = rimY1 - rad;
-        for (let py = py0; py <= py1; py++) {
-          const row = py * W;
-          const cyp = py + 0.5;
-          for (let pxx = px0; pxx <= px1; pxx++) {
-            const cxp = pxx + 0.5;
-            const qx = Math.max(ix0 - cxp, cxp - ix1, 0);
-            const qy = Math.max(iy0 - cyp, cyp - iy1, 0);
-            if (Math.sqrt(qx * qx + qy * qy) - rad >= 0) continue;   // outside
-            const idx = row + pxx;
-            if (-recessDepth < depth[idx]) depth[idx] = -recessDepth;
-          }
+      const px0 = Math.max(0, Math.floor(rimX0));
+      const px1 = Math.min(W - 1, Math.ceil(rimX1));
+      const py0 = Math.max(0, Math.floor(rimY0));
+      const py1 = Math.min(H - 1, Math.ceil(rimY1));
+      const ix0 = rimX0 + rad, ix1 = rimX1 - rad, iy0 = rimY0 + rad, iy1 = rimY1 - rad;
+      for (let py = py0; py <= py1; py++) {
+        const row = py * W;
+        const cyp = py + 0.5;
+        for (let pxx = px0; pxx <= px1; pxx++) {
+          const cxp = pxx + 0.5;
+          const qx = Math.max(ix0 - cxp, cxp - ix1, 0);
+          const qy = Math.max(iy0 - cyp, cyp - iy1, 0);
+          if (Math.sqrt(qx * qx + qy * qy) - rad >= 0) continue;   // outside
+          const idx = row + pxx;
+          if (-recessDepth < depth[idx]) depth[idx] = -recessDepth;
         }
       }
     }

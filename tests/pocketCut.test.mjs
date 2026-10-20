@@ -28,7 +28,8 @@ const FRAME = {
 const RECT = { x0: 0.5, y0: 0.6, x1: 1.5, y1: 1.4, r: 0.2 };   // map mm → block-local a ∈ [−0.5, 0.5], b ∈ [−0.4, 0.4]
 
 test('cutPockets: vertical walls and exact floor on a cube', async () => {
-  const out = await cutPockets(cubeSoup(), [{ frame: FRAME, rect: RECT, depth: 0.5 }]);
+  const { positions: out, cut } = await cutPockets(cubeSoup(), [{ frame: FRAME, rect: RECT, depth: 0.5 }]);
+  assert.equal(cut, true, 'the cut ran');
   assert.ok(out.length > 0);
   const onWallPlane = (x, y) =>
     (Math.abs(Math.abs(x) - 0.5) < 1e-4 && Math.abs(y) <= 0.4 + 1e-4)
@@ -58,7 +59,8 @@ test('cutPockets: unions survive the cut (recessed dots re-added)', async () => 
     // box a ∈ [−0.1, 0.1], b ∈ [−0.1, 0.1], z ∈ [−0.6, 0.2] (12 tris)
     ...boxSoup(-0.1, -0.1, -0.6, 0.1, 0.1, 0.2),
   ]);
-  const out = await cutPockets(cubeSoup(), [{ frame: FRAME, rect: RECT, depth: 0.5 }], [dot]);
+  const { positions: out, cut } = await cutPockets(cubeSoup(), [{ frame: FRAME, rect: RECT, depth: 0.5 }], [dot]);
+  assert.equal(cut, true, 'the cut ran');
   // The dot's top (z = 0.2) must exist after cut + union.
   let above = 0;
   for (let i = 2; i < out.length; i += 3) if (out[i] > 0.19 && out[i] < 0.21) above++;
@@ -71,8 +73,9 @@ test('cutPockets: non-manifold input falls back to the unchanged soup', async ()
     0,0,0, 1,0,0, 0,1,0,
     0,0,1, 1,0,1, 0,1,1,
   ]);
-  const out = await cutPockets(bad, [{ frame: FRAME, rect: RECT, depth: 0.5 }]);
+  const { positions: out, cut } = await cutPockets(bad, [{ frame: FRAME, rect: RECT, depth: 0.5 }]);
   assert.equal(out.length, bad.length);
+  assert.equal(cut, false, 'the fallback reports cut=false');
 });
 
 /** Axis-aligned closed box as a soup (12 triangles, outward winding). */

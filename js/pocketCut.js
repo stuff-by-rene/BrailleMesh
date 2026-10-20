@@ -37,10 +37,14 @@ export function manifoldModule() {
  *        (center, r, u, n, widthMm, heightMm); rect: map.pocketRect
  *        ({x0, y0, x1, y1, r} in map mm); depth: pocket depth in mm
  * @param {Float32Array[]} [unions]  triangle soups to union back into the base
- * @returns {Promise<Float32Array>} new soup; the input unchanged on failure
+ * @returns {Promise<{positions: Float32Array, cut: boolean}>} the (possibly
+ *        unchanged) soup and whether the cut actually ran — callers keep the
+ *        rasterised pocket as a fallback when it didn't.
  */
 export async function cutPockets(positions, cuts, unions = []) {
-  if ((!cuts.length && !unions.length) || !positions.length) return positions;
+  if ((!cuts.length && !unions.length) || !positions.length) {
+    return { positions, cut: false };
+  }
   const M = await manifoldModule();
 
   const welded = _weldSoup(positions, 1e4);
@@ -48,12 +52,20 @@ export async function cutPockets(positions, cuts, unions = []) {
   try {
     base = new M.Manifold(welded);
   } catch (e) {
-    // Float noise at hard edges can defeat the tight weld — retry coarser.
-    try {
-      base = new M.Manifold(_weldSoup(positions, 1e3));
-    } catch (e2) {
-      console.warn('pocketCut: base mesh is not manifold, skipping cut', e2);
-      return positions;
+    // Imported meshes often carry float-noise cracks or sliver gaps that defeat
+    // the tight weld — retry coarser (0.001 mm, then 0.01 mm grid) before
+    // giving up; the coarse weld merges near-duplicate vertices.
+    base = null;
+    for (const decimals of [1e3, 1e2]) {
+      try {
+        base = new M.Manifold(_weldSoup(positions, decimals));
+        break;
+      } catch (e2) { /* try the next coarser grid */ }
+    }
+    if (!base) {
+      console.warn(
+        `pocketCut: base mesh is not watertight/manifold (${positions.length / 3} tris) — skipping cut`, e);
+      return { positions, cut: false };
     }
   }
 
@@ -65,10 +77,10 @@ export async function cutPockets(positions, cuts, unions = []) {
       base = base.add(new M.Manifold(_weldSoup(soup, 1e4)));
     }
   } catch (e) {
-    console.warn('pocketCut: boolean failed, skipping cut', e);
-    return positions;
+    console.warn('pocketCut: boolean failed — skipping cut', e);
+    return { positions, cut: false };
   }
-  if (base.isEmpty()) return positions;
+  if (base.isEmpty()) return { positions, cut: false };
 
   const out = base.getMesh();
   const vp = out.vertProperties, tv = out.triVerts;
@@ -79,7 +91,7 @@ export async function cutPockets(positions, cuts, unions = []) {
     soup[t * 3 + 1] = vp[v + 1];
     soup[t * 3 + 2] = vp[v + 2];
   }
-  return soup;
+  return { positions: soup, cut: true };
 }
 
 /** Weld a non-indexed soup into an indexed mesh (0.1 µm grid via the app's

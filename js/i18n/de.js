@@ -228,6 +228,7 @@ export default {
   "tooltips.outputTriangles": "Das Netz wird zuerst vollständig unterteilt, dann auf diese Anzahl dezimiert",
   "warnings.safetyCapHit": "⚠ Dreiecks-Sicherheitsgrenze bei der Unterteilung erreicht — Ergebnis kann gröber als gewünschte Kantenlänge sein.",
   "warnings.preserveOverBudget": "⚠ Die untexturierten Flächen überschreiten allein schon das Dreieckslimit — sie wurden erhalten, daher liegt der Export über dem Limit.",
+  "warnings.pocketCutFailed": "⚠ Taschenwände konnten nicht geometrisch geschnitten werden (Mesh nicht wasserdicht) — die Taschen wurden weich exportiert.",
   "warnings.softwareRendering": "⚠ 3D wird auf der CPU berechnet — die Hardwarebeschleunigung ist in diesem Browser aus oder nicht verfügbar, daher ist die Ansicht langsam. Aktiviere „Grafikbeschleunigung verwenden, wenn verfügbar“ in den Browsereinstellungen und starte den Browser neu; unter chrome://gpu sollte WebGL dann als „Hardware accelerated“ erscheinen. Bei Laptops mit mehreren GPUs den Browser in den Grafikeinstellungen des Betriebssystems auf „Hohe Leistung“ stellen.",
   "ui.exportStl": "STL exportieren",
   "ui.export3mf": "3MF exportieren",
