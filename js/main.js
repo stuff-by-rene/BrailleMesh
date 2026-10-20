@@ -39,6 +39,7 @@ import { APP_VERSION } from './version.js';
 import { generateBrailleMap, BRAILLE_DEFAULTS, BRAILLE_LANGUAGES, BR_LOCK_DEPS } from './braille.js';
 import { blockDescriptor, blockFrame, blockToPipelineLayer, packBlockAtlas, MAX_PREVIEW_BLOCKS } from './brailleBlocks.js';
 import { buildBrailleSolid, buildCaptionSolid } from './brailleSolid.js';
+import { cutPockets } from './pocketCut.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -3035,7 +3036,7 @@ function _unionFaceWeights(hardFlags, geometry, withAngle) {
  * path unchanged; anything else becomes the layered path (exportPipeline.js
  * `layers`).
  */
-function _pipelineInputs({ baseOnly = false } = {}) {
+function _pipelineInputs({ baseOnly = false, omitPocket = false } = {}) {
   const parts = [];
   for (let i = 0; i < layers.length; i++) {
     const L = layers[i];
@@ -3053,7 +3054,7 @@ function _pipelineInputs({ baseOnly = false } = {}) {
   const geometry = split ? paintGeometry : currentGeometry;
 
   // Braille block placements ride along as pseudo-layers (one per placement).
-  const blockLayers = _blockPipelineLayers(positions, { baseOnly });
+  const blockLayers = _blockPipelineLayers(positions, { baseOnly, omitPocket });
   const blockHard = blockLayers.map(l => l.hardFaces);
 
   if (!split && parts.length === 1 && !blockLayers.length && parts[0].isActive) {
@@ -3220,17 +3221,18 @@ function _brailleMapKey(p) {
  *  The text MUST be part of the key: two blocks with identical params but
  *  different text otherwise share one cache entry and the model renders the
  *  first block's braille for both. */
-function _brailleBlockKey(B, pocketsOnly = false, captionOnly = false, omitCaption = false) {
+function _brailleBlockKey(B, pocketsOnly = false, captionOnly = false, omitCaption = false, omitPocket = false) {
   return _brailleMapKey(B.params) + '|t=' + B.text
-    + (pocketsOnly ? '+po' : '') + (captionOnly ? '+co' : '') + (omitCaption ? '+oc' : '');
+    + (pocketsOnly ? '+po' : '') + (captionOnly ? '+co' : '')
+    + (omitCaption ? '+oc' : '') + (omitPocket ? '+op' : '');
 }
 
 /** The block's depth map, regenerated from params or text when they changed. */
-function _brailleMapFor(B, pocketsOnly = false, captionOnly = false, omitCaption = false) {
-  const key = _brailleBlockKey(B, pocketsOnly, captionOnly, omitCaption);
+function _brailleMapFor(B, pocketsOnly = false, captionOnly = false, omitCaption = false, omitPocket = false) {
+  const key = _brailleBlockKey(B, pocketsOnly, captionOnly, omitCaption, omitPocket);
   let map = _brailleMapCache.get(key);
   if (!map) {
-    map = generateBrailleMap({ ...B.params, text: B.text, pocketsOnly, captionOnly, omitCaption });
+    map = generateBrailleMap({ ...B.params, text: B.text, pocketsOnly, captionOnly, omitCaption, omitPocket });
     if (map) {
       _brailleMapCache.set(key, map);
       while (_brailleMapCache.size > 48) {
@@ -3290,11 +3292,16 @@ function _previewBlocks() {
   return { list, atlasTex: atlas.texture };
 }
 
-/** Block placements as pipeline pseudo-layers. baseOnly: the base carries
- *  only what stays baked — recessed pockets (caption omitted when it becomes
- *  its own volume) and engraved captions; raised dots and embossed captions
- *  are separate solid volumes instead. */
-function _blockPipelineLayers(positions, { baseOnly = false } = {}) {
+/** Block placements as pipeline pseudo-layers.
+ *  Preview (no flags): every block contributes its full map — the recessed
+ *  frame is a 1-px cliff the shader shades sharp per pixel.
+ *  omitPocket (full-baked export): raised blocks keep their raster dots;
+ *  recessed blocks contribute nothing here — their pockets are cut
+ *  geometrically and their dots unioned back as exact solids.
+ *  baseOnly (separate-part export): only what stays baked — recessed blocks
+ *  carry an engraved caption if any (pockets come from the cut, dots are own
+ *  volumes); raised blocks an engraved caption only. */
+function _blockPipelineLayers(positions, { baseOnly = false, omitPocket = false } = {}) {
   const out = [];
   for (const B of braillePool) {
     if (!B.placements.length) continue;
@@ -3302,28 +3309,51 @@ function _blockPipelineLayers(positions, { baseOnly = false } = {}) {
     const embossedCaption = B.params.blackShow && B.params.blackRelief === 'emboss';
     const engravedCaption = B.params.blackShow && !embossedCaption;
     for (const pl of B.placements) {
-      if (baseOnly) {
-        // The base carries only what stays baked: recessed pockets (caption
-        // omitted when it becomes its own volume) and engraved captions
-        // (a recess cannot be a positive volume). Raised dots and embossed
-        // captions are separate volumes instead.
-        if (recessed) {
-          const map = _brailleMapFor(B, true, false, embossedCaption);
-          if (!map) continue;
-          out.push(blockToPipelineLayer({ ...B, map }, pl, positions));
-        } else if (engravedCaption) {
-          const map = _brailleMapFor(B, false, true, false);
-          if (!map) continue;
-          out.push(blockToPipelineLayer({ ...B, map }, pl, positions));
-        }
-        continue;
+      let map = null;
+      if (baseOnly || (omitPocket && recessed)) {
+        if (recessed) map = _brailleMapFor(B, true, false, embossedCaption, true);
+        else if (engravedCaption) map = _brailleMapFor(B, false, true, false);
+      } else {
+        map = _brailleMapFor(B, false, false, false, omitPocket);
       }
-      const map = _brailleMapFor(B);
       if (!map) continue;
       out.push(blockToPipelineLayer({ ...B, map }, pl, positions));
     }
   }
   return out;
+}
+
+/** Pocket-cut descriptors for every recessed placement: the block frame plus
+ *  the pocket rect (map mm, incl. corner radius) and the depth — consumed by
+ *  cutPockets() for true vertical walls in every mesh export. */
+function _braillePocketCuts() {
+  const cuts = [];
+  for (const B of braillePool) {
+    if (B.params.mode !== 'recessed' || !B.placements.length) continue;
+    const map = _brailleMapFor(B);
+    if (!map || !map.pocketRect) continue;
+    for (const pl of B.placements) {
+      cuts.push({
+        frame: blockDescriptor(B, pl),
+        rect: map.pocketRect,
+        depth: Math.max(0.05, B.params.recessDepth),
+      });
+    }
+  }
+  return cuts;
+}
+
+/** Recessed blocks' dot solids (one soup per placement) — unioned back into
+ *  the full-baked base after the pocket cut removed their raster copies. */
+function _brailleRecessedDotSolids() {
+  const soups = [];
+  for (const B of braillePool) {
+    if (B.params.mode !== 'recessed' || !B.placements.length) continue;
+    const map = _brailleMapFor(B);
+    if (!map) continue;
+    for (const pl of B.placements) soups.push(buildBrailleSolid({ ...B, map }, pl));
+  }
+  return soups;
 }
 
 // ── Braille snapshot (undo / session / project) ─────────────────────────────
@@ -4120,15 +4150,14 @@ async function handleExport3MFPart() {
     if (exportToken !== myToken) return;
 
     // Base body: run the pipeline only when it has relief to bake (texture
-    // layers or recessed pockets); a clean base skips straight to the pose
-    // restore — applyDisplacement has no map to sample otherwise.
+    // layers or engraved captions); a clean base skips straight to the cut —
+    // applyDisplacement has no map to sample otherwise.
     const hasBaseRelief = _hasTexturedLayer()
       || braillePool.some(B => B.placements.length
-        && (B.params.mode === 'recessed'
-          || (B.params.blackShow && B.params.blackRelief !== 'emboss')));
-    let basePositions, baseNormals = null;
+        && B.params.blackShow && B.params.blackRelief !== 'emboss');
+    let basePositions;
     if (hasBaseRelief) {
-      const inputs = _pipelineInputs({ baseOnly: true });
+      const inputs = _pipelineInputs({ baseOnly: true, omitPocket: true });
       const result = await runPipeline({
         positions: inputs.positions,
         faceWeights: inputs.faceWeights,
@@ -4143,13 +4172,22 @@ async function handleExport3MFPart() {
         mode: 'export',
       }, _onExportPipelineEvent, () => exportToken !== myToken);
       if (!result || exportToken !== myToken) return;
-      _restoreOriginalPose(result.positions, result.normals);
       basePositions = result.positions;
-      baseNormals = result.normals;
     } else {
       basePositions = Float32Array.from(currentGeometry.attributes.position.array);
-      _restoreOriginalPose(basePositions, null);
     }
+
+    // Hard pocket walls: cut the recessed frames geometrically (still in the
+    // working space — the placement frames live here). The dots stay separate
+    // volumes, so no union is needed.
+    const pocketCuts = _braillePocketCuts();
+    if (pocketCuts.length) {
+      setProgress(0.9, t('progress.cutPockets'));
+      await yieldFrame();
+      if (exportToken !== myToken) return;
+      basePositions = await cutPockets(basePositions, pocketCuts);
+    }
+    _restoreOriginalPose(basePositions, null);
 
     const brailleParts = _buildBrailleSolidParts();
     for (const p of brailleParts) _restoreOriginalPose(p.positions, null);
@@ -6281,7 +6319,7 @@ async function handleExport(format = 'stl') {
     // displacement will be applied. Soft-brush paint rides along separately.
     // With several visible layers the pipeline composites them per vertex
     // (exportPipeline.js `layers`).
-    const inputs = _pipelineInputs();
+    const inputs = _pipelineInputs({ omitPocket: true });
 
     // Run the heavy pipeline (subdivide → regularize → displace → decimate →
     // bottom snaps → repair), preferably in the export worker so the UI stays
@@ -6302,6 +6340,19 @@ async function handleExport(format = 'stl') {
       mode: 'export',
     }, _onExportPipelineEvent, isStale);
     if (!result || isStale()) return;
+
+    // Hard pocket walls: cut the recessed frames geometrically and union the
+    // recessed dots back as exact solids (the cut removed their raster
+    // copies along with the pocket). Still in the working space — the
+    // placement frames live here; the pose restore comes after.
+    const pocketCuts = _braillePocketCuts();
+    if (pocketCuts.length) {
+      setProgress(0.93, t('progress.cutPockets'));
+      await yieldFrame();
+      if (exportToken !== myToken) return;
+      result.positions = await cutPockets(result.positions, pocketCuts, _brailleRecessedDotSolids());
+      result.normals = null;   // writers recompute face normals
+    }
 
     const exportWarnings = [];
     if (result.safetyCapHit) exportWarnings.push(t('warnings.safetyCapHit'));

@@ -300,7 +300,7 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
         subdivided, refined, settings, bounds,
         (p) => onEvent('displace', p, { triCount: subTriCount })
       );
-    } else {
+    } else if (input.imageData) {
       displaced = applyDisplacement(
         subdivided,
         input.imageData,
@@ -310,6 +310,12 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
         bounds,
         (p) => onEvent('displace', p, { triCount: subTriCount })
       );
+    } else {
+      // Nothing to bake (e.g. the full-baked export of a recessed-only
+      // Braille model — pockets are cut and dots unioned after the pipeline).
+      // Pass the subdivided mesh through; transfer ownership.
+      displaced = subdivided;
+      subdivided = null;
     }
     if (shouldAbort()) return null;
 
@@ -322,7 +328,7 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     let lockedFaces = null;
     const blockLayers = Array.isArray(input.layers)
       ? input.layers.filter(L => L?.settings?.block && L.hardFaces) : [];
-    if (settings.preserveUntextured || blockLayers.length) {
+    if (subdivided && (settings.preserveUntextured || blockLayers.length)) {
       const ew = subdivided.attributes.excludeWeight;
       const triN = subdivided.attributes.position.count / 3;
       lockedFaces = new Uint8Array(triN);
@@ -339,8 +345,10 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
     }
 
     // Free subdivided geometry — displacement created a separate copy.
-    subdivided.dispose();
-    subdivided = null;
+    if (subdivided) {
+      subdivided.dispose();
+      subdivided = null;
+    }
 
     const dispTriCount = displaced.attributes.position.count / 3;
     const needsDecimation = dispTriCount > settings.maxTriangles;

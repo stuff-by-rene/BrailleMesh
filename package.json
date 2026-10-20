@@ -9,5 +9,8 @@
   "devDependencies": {
     "fflate": "0.8.2",
     "three": "0.170.0"
+  },
+  "dependencies": {
+    "manifold-3d": "^3.5.4"
   }
 }

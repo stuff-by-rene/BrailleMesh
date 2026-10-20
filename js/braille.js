@@ -468,11 +468,13 @@ function dotRow(d) { return (d <= 6 ? (d - 1) % 3 : 3) + 1; }   // 1-based, top 
 /**
  * Rasterise the Braille block.
  * @param {object} p  parameters (see BRAILLE_DEFAULTS; mm units). Options:
- *   pocketsOnly — record the dots but don't rasterise them (recessed base of
+ *   pocketsOnly — record the dots but don't rasterise them (export base of
  *   the separate-part export). captionOnly — dots recorded but not rasterised,
  *   only the caption relief is baked (raised base carrying an engraved
  *   caption). omitCaption — the caption is skipped entirely (its own solid
- *   volume carries it instead).
+ *   volume carries it instead). omitPocket — the recessed frame is not
+ *   rasterised (pocketRect is still reported); the exports cut it
+ *   geometrically instead (pocketCut.js) for true vertical walls.
  * @returns {null | { canvas, imageData, width, height, px, widthMm, heightMm,
  *                    amplitudeMm, lineCount, unknownChars, unicode,
  *                    contentRect, dots, pocketRect, caption }}
@@ -480,7 +482,8 @@ function dotRow(d) { return (d <= 6 ? (d - 1) % 3 : 3) + 1; }   // 1-based, top 
  *   millimetres (x from the map's left edge, y from its BOTTOM edge) — the
  *   preview shader's block weight is 1 inside it and 0 outside.
  *   dots: [{ x, y, r, h }] dot centres in the same coordinates (for the
- *   separate-part solid export). pocketRect: the recessed frame, same coords.
+ *   separate-part solid export). pocketRect: the recessed frame, same coords,
+ *   plus r = corner radius in mm for the geometric pocket cut.
  *   caption: { alpha, w, h, x0, y0, depth } cropped glyph-coverage mask of the
  *   black-print caption (canvas-px frame, x0/y0 = crop origin) for the
  *   caption's own solid volume; null when disabled or omitted.
@@ -607,41 +610,39 @@ export function generateBrailleMap(p) {
       }
     });
     if (dTop < Infinity) {
-      // Soft wall: the depth ramps from the surface into the pocket over a
-      // short rounded chamfer instead of a 1-px cliff. Mesh vertices sample
-      // this map — a hard edge becomes a sawtooth staircase on the exported
-      // wall, a smoothstep ramp becomes a clean chamfer that also prints
-      // better (no stepped overhang).
+      // Hard-walled pocket: full depth inside a rounded-rect footprint, 1-px
+      // cliff at the wall. The preview shader shades it sharp (per-pixel
+      // normals); the exports cut the same footprint geometrically
+      // (pocketCut.js) for true vertical walls — a raster ramp could only
+      // ever displace vertices into a sloped, rounded wall.
       const rimX0 = toPxX(dLeft - recessMargin), rimX1 = toPxX(dRight + recessMargin);
       const rimY0 = toPxY(dTop - recessMargin), rimY1 = toPxY(dBot + recessMargin);
-      const cham = Math.max(2, Math.min(0.4 * px, recessDepth * px));   // px
-      const px0 = Math.max(0, Math.floor(rimX0 - cham));
-      const px1 = Math.min(W - 1, Math.ceil(rimX1 + cham));
-      const py0 = Math.max(0, Math.floor(rimY0 - cham));
-      const py1 = Math.min(H - 1, Math.ceil(rimY1 + cham));
-      for (let py = py0; py <= py1; py++) {
-        const row = py * W;
-        const cyp = py + 0.5;
-        for (let pxx = px0; pxx <= px1; pxx++) {
-          const cxp = pxx + 0.5;
-          const dx = Math.max(rimX0 - cxp, cxp - rimX1, 0);
-          const dy = Math.max(rimY0 - cyp, cyp - rimY1, 0);
-          const dOut = Math.sqrt(dx * dx + dy * dy);   // Euclidean → rounded corners
-          if (dOut >= cham) continue;
-          let t = 1 - dOut / cham;
-          t = t * t * (3 - 2 * t);                     // tangent to floor & surface
-          const z = -recessDepth * t;
-          const idx = row + pxx;
-          if (z < depth[idx]) depth[idx] = z;
+      const rad = Math.max(1, Math.min(0.4 * px, (rimX1 - rimX0) / 2, (rimY1 - rimY0) / 2));   // px
+      // Map millimetres: x from left, y from BOTTOM; r = corner radius (mm).
+      pocketRect = {
+        x0: rimX0 / px, x1: rimX1 / px,
+        y0: heightMm - rimY1 / px, y1: heightMm - rimY0 / px,
+        r: rad / px,
+      };
+      if (!params.omitPocket) {
+        const px0 = Math.max(0, Math.floor(rimX0));
+        const px1 = Math.min(W - 1, Math.ceil(rimX1));
+        const py0 = Math.max(0, Math.floor(rimY0));
+        const py1 = Math.min(H - 1, Math.ceil(rimY1));
+        const ix0 = rimX0 + rad, ix1 = rimX1 - rad, iy0 = rimY0 + rad, iy1 = rimY1 - rad;
+        for (let py = py0; py <= py1; py++) {
+          const row = py * W;
+          const cyp = py + 0.5;
+          for (let pxx = px0; pxx <= px1; pxx++) {
+            const cxp = pxx + 0.5;
+            const qx = Math.max(ix0 - cxp, cxp - ix1, 0);
+            const qy = Math.max(iy0 - cyp, cyp - iy1, 0);
+            if (Math.sqrt(qx * qx + qy * qy) - rad >= 0) continue;   // outside
+            const idx = row + pxx;
+            if (-recessDepth < depth[idx]) depth[idx] = -recessDepth;
+          }
         }
       }
-      // Map millimetres: x from left, y from BOTTOM (chamfer included).
-      pocketRect = {
-        x0: Math.max(0, rimX0 - cham) / px,
-        x1: Math.min(W, rimX1 + cham) / px,
-        y0: heightMm - Math.min(H, rimY1 + cham) / px,
-        y1: heightMm - Math.max(0, rimY0 - cham) / px,
-      };
     }
   }
 
