@@ -113,6 +113,20 @@ test('cutPockets: T-junction crack is repaired and the cut proceeds', async () =
   assert.equal(sloped, 0, 'no vertex off the wall surface between surface and floor');
 });
 
+test('cutPockets: duplicate faces are dropped and the cut proceeds', async () => {
+  // The top face's first triangle appended a second time (same winding) —
+  // pushes its edges to count 3, which manifold-3d rejects.
+  const soup = cubeSoup();
+  const dup = new Float32Array(soup.length + 9);
+  dup.set(soup);
+  dup.set(soup.slice(0, 9), soup.length);
+  const { positions: out, cut } = await cutPockets(dup, [{ frame: FRAME, rect: RECT, depth: 0.5 }]);
+  assert.equal(cut, true, 'dedupe rescued the duplicated face, cut ran');
+  let floor = 0;
+  for (let i = 2; i < out.length; i += 3) if (Math.abs(out[i] + 0.5) < 1e-5) floor++;
+  assert.ok(floor > 0, 'pocket floor exists');
+});
+
 /** Axis-aligned closed box as a soup (12 triangles, outward winding). */
 function boxSoup(ax0, b0, z0, ax1, b1, z1) {
   const v = [

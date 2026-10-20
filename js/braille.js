@@ -608,12 +608,14 @@ export function generateBrailleMap(p) {
       }
     });
     if (dTop < Infinity) {
-      // Hard-walled pocket: full depth inside a rounded-rect footprint, 1-px
-      // cliff at the wall. The preview shader shades it sharp (per-pixel
-      // normals). The exports cut the same footprint geometrically
-      // (pocketCut.js) for true vertical walls; if that cut fails (mesh not
-      // watertight), this rasterised cliff stays as the fallback — a steep,
-      // slightly jagged wall instead of no pocket at all.
+      // Pocket wall: a smoothstep chamfer ramping from the surface into the
+      // pocket, tangent at both ends (Euclidean distance → rounded corners).
+      // Mesh vertices sample this map — a 1-px cliff becomes a sawtooth
+      // staircase on displaced walls, this ramp stays clean and prints better.
+      // The exports cut the same footprint geometrically (pocketCut.js) for
+      // true vertical walls; the chamfered lip outside the rim survives that
+      // cut as a clean entry bevel. If the cut can't run (mesh not watertight),
+      // the chamfer IS the wall — soft but artifact-free.
       const rimX0 = toPxX(dLeft - recessMargin), rimX1 = toPxX(dRight + recessMargin);
       const rimY0 = toPxY(dTop - recessMargin), rimY1 = toPxY(dBot + recessMargin);
       const rad = Math.max(1, Math.min(0.4 * px, (rimX1 - rimX0) / 2, (rimY1 - rimY0) / 2));   // px
@@ -623,21 +625,25 @@ export function generateBrailleMap(p) {
         y0: heightMm - rimY1 / px, y1: heightMm - rimY0 / px,
         r: rad / px,
       };
-      const px0 = Math.max(0, Math.floor(rimX0));
-      const px1 = Math.min(W - 1, Math.ceil(rimX1));
-      const py0 = Math.max(0, Math.floor(rimY0));
-      const py1 = Math.min(H - 1, Math.ceil(rimY1));
-      const ix0 = rimX0 + rad, ix1 = rimX1 - rad, iy0 = rimY0 + rad, iy1 = rimY1 - rad;
+      const cham = Math.max(2, Math.min(0.4 * px, recessDepth * px));   // px
+      const px0 = Math.max(0, Math.floor(rimX0 - cham));
+      const px1 = Math.min(W - 1, Math.ceil(rimX1 + cham));
+      const py0 = Math.max(0, Math.floor(rimY0 - cham));
+      const py1 = Math.min(H - 1, Math.ceil(rimY1 + cham));
       for (let py = py0; py <= py1; py++) {
         const row = py * W;
         const cyp = py + 0.5;
         for (let pxx = px0; pxx <= px1; pxx++) {
           const cxp = pxx + 0.5;
-          const qx = Math.max(ix0 - cxp, cxp - ix1, 0);
-          const qy = Math.max(iy0 - cyp, cyp - iy1, 0);
-          if (Math.sqrt(qx * qx + qy * qy) - rad >= 0) continue;   // outside
+          const dx = Math.max(rimX0 - cxp, cxp - rimX1, 0);
+          const dy = Math.max(rimY0 - cyp, cyp - rimY1, 0);
+          const dOut = Math.sqrt(dx * dx + dy * dy);
+          if (dOut >= cham) continue;
+          let t = 1 - dOut / cham;
+          t = t * t * (3 - 2 * t);
           const idx = row + pxx;
-          if (-recessDepth < depth[idx]) depth[idx] = -recessDepth;
+          const z = -recessDepth * t;
+          if (z < depth[idx]) depth[idx] = z;
         }
       }
     }

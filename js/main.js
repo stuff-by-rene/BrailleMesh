@@ -7748,14 +7748,15 @@ async function _applyImportedTexture(unzipped, data) {
 /**
  * Show the load-mode dialog and resolve to 'all' (model + settings),
  * 'settings' (settings only), or null if the user dismisses it. Defaults to
- * 'settings' when a model is already loaded (protect what you're working on),
- * otherwise 'all' (you need the file's model to see anything).
+ * 'all': the file's settings, paint mask and Braille placements belong to the
+ * model bundled in it — applying them onto whatever happens to be loaded
+ * produces nonsense (dots floating off-model, exports of the wrong base).
+ * Deliberately re-applying settings to the current model stays one click away.
  */
 function promptLoadMode() {
   return new Promise((resolve) => {
-    const keepCurrent = !!currentGeometry;
-    loadModeSettingsRadio.checked = keepCurrent;
-    loadModeAllRadio.checked = !keepCurrent;
+    loadModeAllRadio.checked = true;
+    loadModeSettingsRadio.checked = false;
     loadDialog.classList.remove('hidden');
 
     let done = false;

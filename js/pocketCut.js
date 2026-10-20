@@ -64,23 +64,31 @@ export async function cutPockets(positions, cuts, unions = []) {
       } catch { /* try the next coarser grid */ }
     }
     if (!base) {
-      // Last resort: the app's own repair (weld + drop needle faces + seal
-      // T-junctions from mismatched tessellations), then retry. This rescues
-      // STEP/STL imports whose surfaces meet in T-junctions; real holes stay
-      // broken and fall through to the soft-pocket fallback.
+      // Next: drop duplicate and degenerate faces (scanned models often carry
+      // doubled triangles or hidden internal geometry — each duplicate pushes
+      // its edges to count 4, which manifold-3d rejects).
       try {
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        const fixed = resolveTJunctions(geo, { maxIters: 8 });
-        base = new M.Manifold(_weldSoup(fixed.attributes.position.array, 1e4));
-        console.info('pocketCut: T-junction repair applied, cut proceeding');
-      } catch (e2) {
-        const probe = new THREE.BufferGeometry();
-        probe.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        const d = countEdgeDefects(probe);
-        console.warn(
-          `pocketCut: base mesh not watertight (${d.open} open edges, ${d.nonManifold} non-manifold edges, ${d.tris} tris) — exporting soft pocket`, e2);
-        return { positions, cut: false };
+        base = new M.Manifold(_dedupeFaces(welded));
+        console.info('pocketCut: duplicate faces dropped, cut proceeding');
+      } catch {
+        // Last resort: the app's own repair (weld + drop needle faces + seal
+        // T-junctions from mismatched tessellations), then dedupe and retry.
+        // This rescues STEP/STL imports whose surfaces meet in T-junctions;
+        // real holes stay broken and fall through to the soft-pocket fallback.
+        try {
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+          const fixed = resolveTJunctions(geo, { maxIters: 16 });
+          base = new M.Manifold(_dedupeFaces(_weldSoup(fixed.attributes.position.array, 1e4)));
+          console.info('pocketCut: T-junction repair applied, cut proceeding');
+        } catch (e2) {
+          const probe = new THREE.BufferGeometry();
+          probe.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+          const d = countEdgeDefects(probe);
+          console.warn(
+            `pocketCut: base mesh not watertight (${d.open} open edges, ${d.nonManifold} non-manifold edges, ${d.tris} tris) — exporting soft pocket`, e2);
+          return { positions, cut: false };
+        }
       }
     }
   }
@@ -118,14 +126,37 @@ function _weldSoup(positions, decimals) {
   const vertProperties = new Float32Array(uniqueCount * 3);
   const seen = new Uint8Array(uniqueCount);
   for (let i = 0; i < count; i++) {
-    const id = vertexId[i];
-    if (seen[id]) continue;
-    seen[id] = 1;
-    vertProperties[id * 3] = positions[i * 3];
-    vertProperties[id * 3 + 1] = positions[i * 3 + 1];
-    vertProperties[id * 3 + 2] = positions[i * 3 + 2];
+    const v = vertexId[i];
+    if (!seen[v]) {
+      vertProperties[v * 3] = positions[i * 3];
+      vertProperties[v * 3 + 1] = positions[i * 3 + 1];
+      vertProperties[v * 3 + 2] = positions[i * 3 + 2];
+      seen[v] = 1;
+    }
   }
-  return { vertProperties, triVerts: new Uint32Array(vertexId), numProp: 3 };
+  const triVerts = new Uint32Array(count);
+  for (let i = 0; i < count; i++) triVerts[i] = vertexId[i];
+  return { numProp: 3, vertProperties, triVerts };
+}
+
+/** Drop duplicate and degenerate faces from a welded mesh. Scanned/downloaded
+ *  models often carry the same triangle twice (or hidden doubled internals);
+ *  every duplicate pushes its three edges to count 4, which manifold-3d
+ *  rejects outright. Keeping the first occurrence restores count 2. */
+function _dedupeFaces({ numProp, vertProperties, triVerts }) {
+  const seen = new Set();
+  const keep = [];
+  for (let t = 0; t < triVerts.length; t += 3) {
+    const a = triVerts[t], b = triVerts[t + 1], c = triVerts[t + 2];
+    if (a === b || b === c || a === c) continue;
+    const s = a < b ? (b < c ? [a, b, c] : a < c ? [a, c, b] : [c, a, b])
+      : (a < c ? [b, a, c] : b < c ? [b, c, a] : [c, b, a]);
+    const key = `${s[0]},${s[1]},${s[2]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keep.push(a, b, c);
+  }
+  return { numProp, vertProperties, triVerts: new Uint32Array(keep) };
 }
 
 /** CCW rounded-rect contour (block-local mm). */
