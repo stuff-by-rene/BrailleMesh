@@ -53,6 +53,18 @@ test('cutPockets: vertical walls and exact floor on a cube', async () => {
   assert.equal(sloped, 0, 'no vertex off the wall planes between surface and floor');
 });
 
+test('cutPockets: zero corner radius yields sharp 90° pocket corners', async () => {
+  const sharp = { ...RECT, r: 0 };
+  const { positions: out, cut } = await cutPockets(cubeSoup(), [{ frame: FRAME, rect: sharp, depth: 0.5 }]);
+  assert.equal(cut, true, 'the cut ran with r=0');
+  let corner = 0;
+  for (let i = 0; i < out.length; i += 3) {
+    if (Math.abs(out[i] - 0.5) < 1e-6 && Math.abs(out[i + 1] - 0.4) < 1e-6
+        && Math.abs(out[i + 2] + 0.5) < 1e-6) corner++;
+  }
+  assert.ok(corner > 0, 'a floor vertex sits exactly at the sharp corner');
+});
+
 test('cutPockets: unions survive the cut (recessed dots re-added)', async () => {
   // A small box solid sitting INSIDE the pocket footprint, spanning the full
   // pocket depth and poking above the surface — must survive the cut.

@@ -11,7 +11,7 @@ import { initViewer, loadGeometry, setMeshMaterial, setMeshGeometry, setWirefram
          clearDiagOverlays, setDiagEdges, addDiagFaces,
          setRotationGizmo, isGizmoDragging, isSoftwareRendering, setTurntable,
          setSectionView, setSectionAxis, flipSection, setSectionHandlesLocked,
-         sectionVisibleHits } from './viewer.js';
+         sectionVisibleHits, warmUpPreviewMaterial } from './viewer.js';
 import { loadModelFile, computeBounds, getTriangleCount }  from './stlLoader.js';
 import { estimateStep } from './stepLoader.js';
 import { resolveStepSettings } from './stepConvert.js';
@@ -209,7 +209,6 @@ let brailleActivePlacement = -1;   // index into the active block's placements
 let _brailleSeq = 0;
 let _brailleMapCache = new Map();  // mapKey → generateBrailleMap result
 let _blockAtlas = null;            // { texture, rects, sig } for the preview shader
-let braillePlaceActive = false;    // "Place on model" click mode
 let _brailleMoveDrag = null;       // { blockIdx, plIdx } while dragging a placement
 let _brailleCamAnim = 0;           // camera-swing animation frame handle
 
@@ -483,7 +482,6 @@ const brailleEditorEl      = document.getElementById('braille-editor');
 const brailleEditorTitleEl = document.getElementById('braille-editor-title');
 const brailleEditText      = document.getElementById('braille-edit-text');
 const brailleEditLang      = document.getElementById('braille-edit-lang');
-const braillePlaceBtn      = document.getElementById('braille-place-btn');
 const brailleModeRaisedBtn = document.getElementById('braille-mode-raised');
 const brailleModeRecessedBtn = document.getElementById('braille-mode-recessed');
 const brailleAlignSelect   = document.getElementById('braille-align-select');
@@ -494,10 +492,12 @@ const brailleBlackEmbossBtn  = document.getElementById('br-black-emboss');
 const brRotationRow        = document.getElementById('br-rotation-row');
 const brRotationSlider     = document.getElementById('br-rotation');
 const brRotationVal        = document.getElementById('br-rotation-val');
+const brRotationResetBtn   = document.getElementById('br-rotation-reset');
 const brPositionRow        = document.getElementById('br-position-row');
 const brPositionSideEl     = document.getElementById('br-position-side');
 const brPosLeft            = document.getElementById('br-pos-left');
 const brPosBottom          = document.getElementById('br-pos-bottom');
+const brPositionResetBtn   = document.getElementById('br-position-reset');
 const braillePlacementsEl  = document.getElementById('braille-placements');
 const brailleLocalizeBtn   = document.getElementById('braille-localize-btn');
 const brailleResetBtn      = document.getElementById('braille-reset-btn');
@@ -505,9 +505,10 @@ const brailleDeleteBlockBtn = document.getElementById('braille-delete-block-btn'
 const export3mfPartBtn     = document.getElementById('export-3mf-part-btn');
 const recessMarginRow      = document.getElementById('br-recess-margin-row');
 const recessDepthRow       = document.getElementById('br-recess-depth-row');
+const pocketCornerRow      = document.getElementById('br-pocket-corner-row');
 // Per-block parameter sliders: id pattern br-<key> / br-<key>-val.
 const BR_PARAM_KEYS = ['dotDiameter', 'dotSpacing', 'cellSpacing', 'wordSpacing', 'rowSpacing',
-                       'dotHeight', 'dotRounding', 'recessMargin', 'recessDepth',
+                       'dotHeight', 'dotRounding', 'recessMargin', 'recessDepth', 'pocketCorner',
                        'blackSize', 'blackDepth'];
 const brSliders = {};
 for (const k of BR_PARAM_KEYS) {
@@ -531,9 +532,93 @@ document.querySelectorAll('.br-reset-btn[data-key]').forEach(btn => {
 });
 const BR_DECIMALS = {
   dotDiameter: 2, dotSpacing: 2, cellSpacing: 1, wordSpacing: 1, rowSpacing: 1,
-  dotHeight: 2, dotRounding: 2, recessMargin: 1, recessDepth: 2,
+  dotHeight: 2, dotRounding: 2, recessMargin: 1, recessDepth: 2, pocketCorner: 2,
   blackSize: 1, blackDepth: 2,
 };
+
+// ── Per-parameter reset arrows for the texture/projection/tool rows ──────────
+// Same pattern as the Braille editor rows: a small ↺ next to the value,
+// visible only while the value differs from its default. The reset drives the
+// same control event user input fires, so the existing wiring (locks, linked
+// updates, preview debounce) runs unchanged. Numeric rows only — selects,
+// segments and checkboxes stay with the header reset.
+const TX_RESET_ROWS = [
+  { valId: 'texture-smoothing-val',   def: 0 },
+  { valId: 'seam-blend-val',          def: 1 },
+  { valId: 'seam-band-width-val',     def: 0.5 },
+  { valId: 'cap-angle-val',           def: 20 },
+  { valId: 'amplitude-val',           def: 0.5 },
+  { valId: 'scale-u-val',             defFn: () => _defaultTileMm() },
+  { valId: 'scale-v-val',             defFn: () => _defaultTileMm() },
+  { valId: 'offset-u-val',            def: 0 },
+  { valId: 'offset-v-val',            def: 0 },
+  { valId: 'rotation-val',            def: 0 },
+  { valId: 'bottom-angle-limit-val',  def: 5 },
+  { valId: 'top-angle-limit-val',     def: 0 },
+  { valId: 'boundary-falloff-val',    def: 0 },
+  { valId: 'refine-length-val',       defFn: () => _defaultRefineLength() },
+  { valId: 'harvest-tol',             def: 0.005, evt: 'input' },
+  { sliderId: 'max-triangles' },
+  { sliderId: 'excl-brush-radius-slider' },
+  { sliderId: 'excl-brush-hardness-slider' },
+  { sliderId: 'excl-threshold-slider' },
+];
+const _txResetBtns = [];   // { btn, control, row }
+
+/** Resolution default: ~1/250 of the model's bounding-box diagonal (the same
+ *  rule handleModelFile and resetSettingsToDefaults use), clamped. */
+function _defaultRefineLength() {
+  if (!currentBounds?.size) return 1;
+  const sz = currentBounds.size;
+  const diag = Math.sqrt(sz.x * sz.x + sz.y * sz.y + sz.z * sz.z);
+  return Math.max(0.05, Math.min(5.0, +(diag / 250).toFixed(2)));
+}
+
+function _txDefault(entry, control) {
+  if (entry.sliderId) return parseFloat(control.defaultValue);
+  if (entry.defFn) return entry.defFn();
+  return entry.def;
+}
+
+function _buildTxResetButtons() {
+  const SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  for (const entry of TX_RESET_ROWS) {
+    const control = document.getElementById(entry.valId || entry.sliderId);
+    if (!control) continue;
+    const row = control.closest('.form-row');
+    if (!row || row.querySelector('.tx-reset-btn')) continue;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tx-reset-btn hidden';
+    btn.innerHTML = SVG;
+    btn.dataset.i18nTitle = 'braille.resetParamTitle';
+    btn.title = t('braille.resetParamTitle');
+    btn.setAttribute('aria-label', t('braille.resetParamTitle'));
+    btn.addEventListener('click', () => {
+      if (entry.sliderId) {
+        control.value = control.defaultValue;
+        control.dispatchEvent(new Event('input', { bubbles: true }));
+      } else {
+        control.value = String(_txDefault(entry, control));
+        control.dispatchEvent(new Event(entry.evt || 'change', { bubbles: true }));
+      }
+      _syncTxResetArrows();
+    });
+    row.appendChild(btn);
+    _txResetBtns.push({ btn, control, entry });
+  }
+}
+
+/** Show each arrow only while its value differs from the default. Tolerance =
+ *  half the control's step, so display rounding never flags a false "changed". */
+function _syncTxResetArrows() {
+  for (const { btn, control, entry } of _txResetBtns) {
+    const cur = parseFloat(control.value);
+    const def = _txDefault(entry, control);
+    const tol = (parseFloat(control.step) || 0.01) / 2;
+    btn.classList.toggle('hidden', !(Number.isFinite(cur) && Math.abs(cur - def) > tol));
+  }
+}
 
 // ── Mesh diagnostics DOM refs ────────────────────────────────────────────────
 const meshDiagnostics    = document.getElementById('mesh-diagnostics');
@@ -1264,6 +1349,12 @@ scaleVVal.value = fmtScaleVal(posToScale(parseFloat(scaleVSlider.value)));
 
 // Load geometry immediately — don't wait for textures
 loadDefaultCube();
+
+// Per-parameter reset arrows for the texture/projection/tool rows. Built
+// AFTER wireEvents so the reset clicks reach the existing change/input wiring.
+_buildTxResetButtons();
+document.addEventListener('input', _syncTxResetArrows, true);
+document.addEventListener('change', _syncTxResetArrows, true);
 
 // Restore the map from the last session: a texture from the user's library if the browser still has
 // it, else the preset, else the default. If the user had ANY map active last session (preset or a
@@ -2166,7 +2257,6 @@ function wireEvents() {
   });
   brailleBlackEngraveBtn.addEventListener('click', () => _setBrailleBlackRelief('engrave'));
   brailleBlackEmbossBtn.addEventListener('click', () => _setBrailleBlackRelief('emboss'));
-  braillePlaceBtn.addEventListener('click', () => _toggleBraillePlace(!braillePlaceActive));
   brailleLocalizeBtn.addEventListener('click', _localizeBrailleBlock);
   brailleResetBtn?.addEventListener('click', _resetBrailleParams);
 
@@ -2228,6 +2318,34 @@ function wireEvents() {
   }
   linkSlider(brRotationSlider, brRotationVal, v => _setBraillePlacementRotation(v));
 
+  // Placement rotation/position reset arrows (same pattern as the block
+  // parameter rows): rotation back to 0°, position back to centred on the face.
+  brRotationResetBtn?.addEventListener('click', () => {
+    const B = braillePool[brailleActiveBlock];
+    const pl = B?.placements[brailleActivePlacement];
+    if (!pl || !pl.rotation) { brRotationResetBtn?.classList.add('hidden'); return; }
+    _setBraillePlacementRotation(0);
+    brRotationSlider.value = 0;
+    brRotationVal.value = 0;
+    brRotationResetBtn?.classList.add('hidden');
+    _autoSaveSettings();
+    _commitUndoCapture();
+  });
+  brPositionResetBtn?.addEventListener('click', () => {
+    const B = braillePool[brailleActiveBlock];
+    const pl = B?.placements[brailleActivePlacement];
+    if (!pl) return;
+    const info = _placementFaceInfo(B, pl);
+    if (!info) return;
+    _moveBraillePlacement(B, pl,
+      Math.max(0, (info.faceW - info.halfW * 2) / 2),
+      Math.max(0, (info.faceH - info.halfH * 2) / 2));
+    _renderBrailleEditor();
+    updatePreview();
+    _autoSaveSettings();
+    _commitUndoCapture();
+  });
+
   // Placement position: distances (mm) from the face's left/bottom edges.
   const _applyBraillePos = () => {
     const B = braillePool[brailleActiveBlock];
@@ -2258,8 +2376,8 @@ function wireEvents() {
       return;
     }
 
-    // Braille: grab a placed block to move it, or place a new copy while
-    // place mode is on. Everything else stays with OrbitControls.
+    // Braille: grab a placed block to move it. Everything else stays with
+    // OrbitControls.
     if (brailleMode) {
       const grab = _braillePlacementUnderCursor(e);
       if (grab) {
@@ -2268,14 +2386,9 @@ function wireEvents() {
         brailleActivePlacement = grab.plIdx;
         _brailleMoveDrag = { blockIdx: grab.blockIdx, plIdx: grab.plIdx };
         getControls().enabled = false;
-        _toggleBraillePlace(false);
+        setSectionHandlesLocked(true);
         _renderBraillePool();
         _renderBrailleEditor();
-        return;
-      }
-      if (braillePlaceActive) {
-        e.preventDefault();
-        handleBraillePlaceClick(e);
         return;
       }
     }
@@ -2362,7 +2475,7 @@ function wireEvents() {
     if (_brailleMoveDrag) {
       _brailleMoveDrag = null;
       getControls().enabled = true;
-      setSectionHandlesLocked(braillePlaceActive);
+      setSectionHandlesLocked(false);
       _renderBrailleEditor();   // refresh the placement's location info
       updatePreview();
       _autoSaveSettings();
@@ -2385,7 +2498,6 @@ function wireEvents() {
     if (e.key === 'Escape') {
       if (rotateActive) toggleRotateMode(false);
       if (placeOnFaceActive) togglePlaceOnFace(false);
-      if (braillePlaceActive) _toggleBraillePlace(false);
       if (exclusionTool) setExclusionTool(null);
       licenseOverlay.classList.add('hidden');
       imprintOverlay.classList.add('hidden');
@@ -3381,7 +3493,10 @@ function _brailleSnapshot() {
 
 function _restoreBrailleSnapshot(data) {
   braillePool = (data?.pool ?? []).map(B => ({
-    id: B.id, label: B.label, text: B.text, params: { ...B.params },
+    id: B.id, label: B.label, text: B.text,
+    // Merge the defaults so snapshots saved before a new parameter existed
+    // still carry every key (e.g. pocketCorner) with its default value.
+    params: { ...BRAILLE_DEFAULTS, ...B.params },
     locks: B.locks ? { ...B.locks } : undefined,
     autoLang: B.autoLang !== false,
     placements: (B.placements ?? []).map(pl => ({
@@ -3428,8 +3543,6 @@ function setBrailleMode(on) {
     if (rotateActive) toggleRotateMode(false);
     _renderBraillePool();
     _renderBrailleEditor();
-  } else {
-    _toggleBraillePlace(false);
   }
   updatePreview();
   _autoSaveSettings();
@@ -3510,6 +3623,9 @@ function _renderBrailleEditor() {
   const B = braillePool[brailleActiveBlock];
   if (!B || !brailleEditorEl) {
     brailleEditorEl?.classList.add('hidden');
+    // Browsers restore form values across a reload (Firefox in particular);
+    // without an active block the field must not keep stale text.
+    if (brailleEditText) brailleEditText.value = '';
     return;
   }
   brailleEditorEl.classList.remove('hidden');
@@ -3525,6 +3641,7 @@ function _renderBrailleEditor() {
   brailleModeRecessedBtn.setAttribute('aria-pressed', String(!raised));
   recessMarginRow?.classList.toggle('hidden', raised);
   recessDepthRow?.classList.toggle('hidden', raised);
+  pocketCornerRow?.classList.toggle('hidden', raised);
 
   if (brailleBlackShowChk) brailleBlackShowChk.checked = !!B.params.blackShow;
   brailleBlackRows?.classList.toggle('hidden', !B.params.blackShow);
@@ -3634,6 +3751,7 @@ function _syncBraillePlacementEditor(B, pl) {
     brRotationSlider.value = pl.rotation;
     brRotationVal.value = pl.rotation;
   }
+  brRotationResetBtn?.classList.toggle('hidden', !pl || !pl.rotation);
   brPositionRow?.classList.toggle('hidden', !pl);
   if (pl) {
     const info = _placementFaceInfo(B, pl);
@@ -3641,7 +3759,15 @@ function _syncBraillePlacementEditor(B, pl) {
     if (info) {
       if (document.activeElement !== brPosLeft) brPosLeft.value = info.left.toFixed(1);
       if (document.activeElement !== brPosBottom) brPosBottom.value = info.bottom.toFixed(1);
+      // Position reset arrow: visible while the relief is not centred on the face.
+      const offL = Math.abs(info.left - Math.max(0, (info.faceW - info.halfW * 2) / 2));
+      const offB = Math.abs(info.bottom - Math.max(0, (info.faceH - info.halfH * 2) / 2));
+      brPositionResetBtn?.classList.toggle('hidden', !(offL > 0.05 || offB > 0.05));
+    } else {
+      brPositionResetBtn?.classList.add('hidden');
     }
+  } else {
+    brPositionResetBtn?.classList.add('hidden');
   }
   if (brailleLocalizeBtn) brailleLocalizeBtn.disabled = !pl;
 }
@@ -3735,9 +3861,6 @@ function _selectBrailleBlock(i) {
   if (i === brailleActiveBlock) return;
   brailleActiveBlock = i;
   brailleActivePlacement = -1;
-  // Switching blocks while placing keeps place mode on — the next model
-  // click then places the newly selected block.
-  if (!braillePlaceActive) _toggleBraillePlace(false);
   _renderBraillePool();
   _renderBrailleEditor();
   _autoSaveSettings();
@@ -3753,7 +3876,6 @@ function _deleteBrailleBlock(i) {
   braillePool.splice(i, 1);
   if (brailleActiveBlock === i) { brailleActiveBlock = -1; brailleActivePlacement = -1; }
   else if (brailleActiveBlock > i) brailleActiveBlock--;
-  _toggleBraillePlace(false);
   _renderBraillePool();
   _renderBrailleEditor();
   updatePreview();
@@ -3892,29 +4014,10 @@ function _setBraillePlacementRotation(v) {
   const pl = B?.placements[brailleActivePlacement];
   if (pl) {
     pl.rotation = r;
+    brRotationResetBtn?.classList.toggle('hidden', !r);
     updatePreview();
   }
   return r;
-}
-
-function _toggleBraillePlace(on) {
-  if (on && brailleActiveBlock < 0) return;
-  braillePlaceActive = on;
-  braillePlaceBtn?.classList.toggle('active', on);
-  braillePlaceBtn?.setAttribute('aria-pressed', String(on));
-  setSectionHandlesLocked(on || !!_brailleMoveDrag);
-  if (on) {
-    if (exclusionTool) setExclusionTool(null);
-    // Placing raycasts the base surface — the displaced preview would offset hits.
-    if (settings.useDisplacement) {
-      settings.useDisplacement = false;
-      dispPreviewToggle.checked = false;
-      toggleDisplacementPreview(false);
-    }
-    canvas.style.cursor = 'crosshair';
-  } else if (!exclusionTool && !_brailleMoveDrag) {
-    canvas.style.cursor = '';
-  }
 }
 
 function _placeBrailleAtHit(hit) {
@@ -3932,16 +4035,6 @@ function _placeBrailleAtHit(hit) {
   _renderBrailleEditor();
   updatePreview();
   _autoSaveSettings();
-}
-
-function handleBraillePlaceClick(e) {
-  const mesh = getCurrentMesh();
-  if (!mesh) return;
-  _raycaster.setFromCamera(_canvasNDC(e), getCamera());
-  const hits = _raycaster.intersectObject(mesh);
-  const hit = getFrontFaceHit(hits, mesh);
-  if (!hit) return;
-  _placeBrailleAtHit(hit);
 }
 
 /** The placement under the cursor (active block's placements first). */
@@ -6019,6 +6112,7 @@ function _syncPreviewMaterial() {
 
 function updatePreview() {
   if (!currentGeometry || !currentBounds) return;
+  _syncTxResetArrows();
 
   if (!_hasExportContent()) {
     // No map and no Braille yet — plain material
@@ -7342,6 +7436,18 @@ function resetSettingsToDefaults() {
     // No default texture: reset leaves the model plain until a texture is picked.
     activeMapEntry = null;
     _clearPresetActive();
+
+    // Braille workspace too: clear the pool (texts + placements). The
+    // pre-reset snapshot above was pushed to the undo stack, so Ctrl+Z
+    // restores everything.
+    braillePool.length = 0;
+    brailleActiveBlock = -1;
+    brailleActivePlacement = -1;
+    _brailleMapCache.clear();
+    if (_blockAtlas) { _blockAtlas.texture.dispose(); _blockAtlas = null; }
+    _renderBraillePool();
+    _renderBrailleEditor();
+
     updatePreview();
     try { sessionStorage.removeItem(PROJECT_STORAGE_KEY); } catch { /* ignore */ }
   } finally {
@@ -7985,7 +8091,63 @@ window.addEventListener('keydown', (e) => {
   else                          { e.preventDefault(); _redo(); }
 });
 
+// ── Wheel control for sliders ────────────────────────────────────────────────
+// Clicking a slider arms it for 3 s (the row highlights): while the pointer
+// hovers the armed slider, the wheel adjusts its value instead of scrolling
+// the page. Wheel activity refreshes the window so a longer adjustment is
+// not cut off; without arming, the wheel scrolls normally.
+const WHEEL_ARM_MS = 3000;
+
+function _armSliderWheel(el) {
+  el.__wheelUntil = Date.now() + WHEEL_ARM_MS;
+  const row = el.closest('.form-row') || el.closest('.slider-row') || el.parentElement;
+  if (row) {
+    row.classList.add('wheel-armed');
+    clearTimeout(row.__wheelTimer);
+    row.__wheelTimer = setTimeout(() => row.classList.remove('wheel-armed'), WHEEL_ARM_MS);
+  }
+}
+
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target instanceof Element ? e.target.closest('input[type="range"]') : null;
+  if (el && !el.disabled) _armSliderWheel(el);
+}, true);
+
+document.addEventListener('wheel', (e) => {
+  // The whole row is the target: the 3 px track alone is too easy to leave,
+  // which made the page scroll again on small mouse movements.
+  const row = e.target instanceof Element ? e.target.closest('.form-row, .slider-row') : null;
+  const el = row ? row.querySelector('input[type="range"]') : null;
+  if (!el || el.disabled || Date.now() > (el.__wheelUntil || 0)) return;
+  e.preventDefault();
+  const min = parseFloat(el.min) || 0;
+  const max = el.max === '' ? NaN : parseFloat(el.max);
+  const step = parseFloat(el.step);
+  const inc = Number.isFinite(step) && step > 0 ? step : (Number.isFinite(max) ? (max - min) / 100 : 1);
+  const dir = e.deltaY < 0 ? 1 : -1;
+  const v = parseFloat(el.value) || 0;
+  const nv = Number.isFinite(max)
+    ? Math.min(max, Math.max(min, min + (Math.round((v - min) / inc) + dir) * inc))
+    : v + dir * inc;
+  if (nv !== v) {
+    el.value = nv;
+    _armSliderWheel(el);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+}, { passive: false });
+
 // Restore last session's settings on startup, then take an initial baseline.
 _restoreSessionSettings();
+// Normalise the Braille UI even when no snapshot existed: browsers restore
+// form values across a reload (Firefox), which would otherwise leave stale
+// text in the hidden editor until the first Braille interaction renders it.
+_renderBraillePool();
+_renderBrailleEditor();
 _baselineSnapshot = _captureUndoSnapshot();
 _updateUndoButtons();
+
+// Compile the preview shader during idle: the first placement/texture would
+// otherwise stall ~1-2 s on the one-time program build (measured on ANGLE).
+if ('requestIdleCallback' in window) requestIdleCallback(() => warmUpPreviewMaterial(), { timeout: 3000 });
+else setTimeout(warmUpPreviewMaterial, 1500);

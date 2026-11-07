@@ -423,6 +423,7 @@ export const BRAILLE_DEFAULTS = {
   dotRounding: 0.75,         // CSV DotRounding
   recessMargin: 3.0,         // CSV DistanceRecessCellValue: dot edge → pocket edge
   recessDepth: 0.5,          // default = dotHeight → dot tops flush with the surface
+  pocketCorner: 0.4,         // pocket corner radius (mm); 0 = sharp 90° corners
   align: 'center',           // 'left' | 'center'
   blackShow: false,
   blackSize: 4.0,            // cap height in mm
@@ -608,24 +609,31 @@ export function generateBrailleMap(p) {
       }
     });
     if (dTop < Infinity) {
-      // Pocket wall: a smoothstep chamfer ramping from the surface into the
-      // pocket, tangent at both ends (Euclidean distance → rounded corners).
-      // Mesh vertices sample this map — a 1-px cliff becomes a sawtooth
-      // staircase on displaced walls, this ramp stays clean and prints better.
-      // The exports cut the same footprint geometrically (pocketCut.js) for
-      // true vertical walls; the chamfered lip outside the rim survives that
-      // cut as a clean entry bevel. If the cut can't run (mesh not watertight),
+      // Pocket wall: a smoothstep chamfer band ramping from the surface into
+      // the pocket. Mesh vertices sample this map — a 1-px cliff becomes a
+      // sawtooth staircase on displaced walls, this ramp stays clean and
+      // prints better. The band is measured inward from the pocket FOOTPRINT
+      // (the rim offset outward by the band width, corners rounded with the
+      // user's corner radius), so the ramp's zero level IS the footprint
+      // contour for every radius. The exports cut exactly that footprint
+      // (pocketCut.js): the prism wall there is a true vertical CAD wall and
+      // the bevel is consumed. If the cut can't run (mesh not watertight),
       // the chamfer IS the wall — soft but artifact-free.
       const rimX0 = toPxX(dLeft - recessMargin), rimX1 = toPxX(dRight + recessMargin);
       const rimY0 = toPxY(dTop - recessMargin), rimY1 = toPxY(dBot + recessMargin);
-      const rad = Math.max(1, Math.min(0.4 * px, (rimX1 - rimX0) / 2, (rimY1 - rimY0) / 2));   // px
+      const cham = Math.max(2, Math.min(0.4 * px, recessDepth * px));   // px
+      // Footprint: rim rect offset outward by the chamfer band; corner radius
+      // = the user's pocketCorner (0 → sharp 90° corners), clamped to the size.
+      const fpCx = (rimX0 + rimX1) / 2, fpCy = (rimY0 + rimY1) / 2;
+      const fpHx = (rimX1 - rimX0) / 2 + cham, fpHy = (rimY1 - rimY0) / 2 + cham;
+      const corner = Math.max(0, Math.min(
+        Math.max(0, params.pocketCorner) * px, fpHx, fpHy));   // px
       // Map millimetres: x from left, y from BOTTOM; r = corner radius (mm).
       pocketRect = {
-        x0: rimX0 / px, x1: rimX1 / px,
-        y0: heightMm - rimY1 / px, y1: heightMm - rimY0 / px,
-        r: rad / px,
+        x0: (rimX0 - cham) / px, x1: (rimX1 + cham) / px,
+        y0: heightMm - (rimY1 + cham) / px, y1: heightMm - (rimY0 - cham) / px,
+        r: corner / px,
       };
-      const cham = Math.max(2, Math.min(0.4 * px, recessDepth * px));   // px
       const px0 = Math.max(0, Math.floor(rimX0 - cham));
       const px1 = Math.min(W - 1, Math.ceil(rimX1 + cham));
       const py0 = Math.max(0, Math.floor(rimY0 - cham));
@@ -635,11 +643,16 @@ export function generateBrailleMap(p) {
         const cyp = py + 0.5;
         for (let pxx = px0; pxx <= px1; pxx++) {
           const cxp = pxx + 0.5;
-          const dx = Math.max(rimX0 - cxp, cxp - rimX1, 0);
-          const dy = Math.max(rimY0 - cyp, cyp - rimY1, 0);
-          const dOut = Math.sqrt(dx * dx + dy * dy);
-          if (dOut >= cham) continue;
-          let t = 1 - dOut / cham;
+          // Signed distance to the footprint's rounded rect (negative
+          // inside); dIn = depth below the footprint contour. The ramp spans
+          // one chamfer band inward, so its zero level is the contour and the
+          // boolean prism consumes it completely — corners included.
+          const qx = Math.abs(cxp - fpCx) - (fpHx - corner);
+          const qy = Math.abs(cyp - fpCy) - (fpHy - corner);
+          const dIn = -(Math.hypot(Math.max(qx, 0), Math.max(qy, 0))
+                        + Math.min(Math.max(qx, qy), 0) - corner);
+          if (dIn <= 0) continue;
+          let t = Math.min(1, dIn / cham);
           t = t * t * (3 - 2 * t);
           const idx = row + pxx;
           const z = -recessDepth * t;

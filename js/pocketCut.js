@@ -164,6 +164,9 @@ function _roundedRect(x0, y0, x1, y1, rad, seg = 6) {
   const pts = [];
   const cx0 = x0 + rad, cx1 = x1 - rad, cy0 = y0 + rad, cy1 = y1 - rad;
   const arc = (cx, cy, a0, a1) => {
+    // Sharp corner (user radius 0): a single point — sampled arcs would emit
+    // rad·cos/sin = 0 duplicates and degenerate zero-length edges.
+    if (rad <= 1e-9) { pts.push([cx, cy]); return; }
     for (let i = 0; i <= seg; i++) {
       const a = a0 + (a1 - a0) * (i / seg);
       pts.push([cx + rad * Math.cos(a), cy + rad * Math.sin(a)]);

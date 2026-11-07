@@ -1328,6 +1328,14 @@ main.gallery-open #settings-panel { display: none; }
   background: var(--accent); border: none; cursor: grab;
 }
 
+/* 3 s wheel-control highlight: click a slider, then the wheel adjusts it
+   while the pointer stays on it — the row glows while the window is open. */
+.wheel-armed {
+  box-shadow: 0 0 0 1.5px var(--accent), 0 0 10px rgba(124, 106, 255, 0.35);
+  border-radius: 8px;
+  transition: box-shadow 0.2s;
+}
+
 /* Resolution slider runs coarse → fine left-to-right, so the mm value (where
    smaller = finer) decreases as you drag right. The coarse/fine captions below
    carry the direction; the descending number is intentional. */
@@ -1508,6 +1516,25 @@ input[type="number"].val:focus { outline: none; border-color: var(--accent); }
 }
 .br-reset-btn:hover { color: var(--accent); }
 .br-reset-btn.hidden { display: none; }
+
+/* Same reset arrow for the texture/projection/tool parameter rows. */
+.tx-reset-btn {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.tx-reset-btn:hover { color: var(--accent); }
+.tx-reset-btn.hidden { display: none; }
 
 /* Caption parameter rows only show while the caption is enabled. */
 #br-black-rows.hidden { display: none; }

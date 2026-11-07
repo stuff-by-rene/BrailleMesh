@@ -9,6 +9,7 @@ import { LineSegments2 }  from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial }   from 'three/addons/lines/LineMaterial.js';
 import { SectionController } from './section.js';
+import { createPreviewMaterial } from './previewMaterial.js';
 
 // Pre-allocated temp objects for hot-path event handlers (avoid GC pressure)
 const _tmpQ1 = new THREE.Quaternion();
@@ -951,6 +952,39 @@ export function getCamera()    { return camera; }
 export function getScene()     { return scene; }
 export function getControls()  { return controls; }
 export function getCurrentMesh() { return currentMesh; }
+
+let _previewWarmed = false;
+let _warmupMaterial = null;
+
+/**
+ * Compile the preview shader once while the app is idle. The first placement
+ * or texture otherwise stalls ~1-2 s on the one-time program build
+ * (getProgramInfoLog); three.js keeps the compiled program in its cache, so
+ * every later createPreviewMaterial() reuses it for free.
+ * Two pitfalls make the warmup ineffective otherwise:
+ * - The material must stay referenced: disposing it drops the program's
+ *   usedTimes to 0 and three.js evicts + deletes it.
+ * - The dummy must render in the MAIN scene: the program cache key includes
+ *   scene-derived parameters (numDirLights, environment), so a throwaway
+ *   lightless scene compiles a DIFFERENT program than the real render.
+ */
+export function warmUpPreviewMaterial() {
+  if (_previewWarmed || !renderer || !camera) return;
+  _previewWarmed = true;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+  _warmupMaterial = createPreviewMaterial([], {
+    bounds: { min: new THREE.Vector3(), size: new THREE.Vector3(1, 1, 1), center: new THREE.Vector3() },
+  });
+  _warmupMaterial.clippingPlanes = _clipPlanes;   // same array the real material gets → same program cache key
+  const mesh = new THREE.Mesh(geo, _warmupMaterial);
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+  renderer.render(scene, camera);
+  scene.remove(mesh);
+  geo.dispose();
+  window.__previewWarmed = true;   // debug aid for diagnostics
+}
 
 /**
  * Switch between orthographic and perspective projection.

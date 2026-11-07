@@ -12,7 +12,7 @@ Der **Braille-Modus** ergänzt genau dafür gedachte Beschriftung:
 
 - Textbausteine („Wort1“, „Wort2“, …) in einem **Pool** anlegen.
 - Bausteine **per Drag & Drop** aus dem Pool auf eine Fläche des Modells
-  ziehen (oder „Auf Modell platzieren“ → Fläche anklicken).
+  ziehen.
 - Jeder Baustein hat **eigene Parameter** (Marburg-Medium-Defaults aus
   `Exportierte Parameter.csv`); Regler-Änderungen wirken auf **alle**
   Platzierungen des Bausteins gleichzeitig.
@@ -123,8 +123,6 @@ sichtbar; der Export nimmt alle).
 - **Rotation normalisiert** (`_normDeg`): Platzierungs-Rotation wird immer als
   -180…180 gespeichert (Slider zentriert, Null in der Mitte, beidseitig
   eintippbar); Session-Restore normalisiert alte 0-360-Werte.
-- **Blockwechsel im Platzier-Modus** schaltet den Platzier-Modus nicht aus —
-  der nächste Modellklick platziert den neu gewählten Block.
 - **Map-Cache (`_brailleMapFor`)**: Key = `_brailleBlockKey` = Parameter **UND
   Text** (`|t=…`). Ohne Text im Key teilen sich Blöcke mit gleichen Parametern
   einen Cache-Eintrag und das Modell rendert für beide den zuerst generierten

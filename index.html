@@ -252,7 +252,6 @@
         <div id="braille-editor" class="braille-editor hidden">
           <div class="braille-editor-head">
             <span id="braille-editor-title" class="braille-editor-title"></span>
-            <button id="braille-place-btn" class="excl-tool-btn" aria-pressed="false" data-i18n="braille.place" data-i18n-title="braille.placeTitle" title="Click a face of the model to place this block there">Place on model</button>
           </div>
 
           <div class="form-row">
@@ -355,6 +354,13 @@
             <input type="number" class="val" id="br-recess-depth-val" value="0.5" min="0.1" max="1.5" step="0.05" data-wheel-decimals="2" />
             <button class="br-reset-btn" data-key="recessDepth" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
+          <div class="form-row slider-row" id="br-pocket-corner-row">
+            <label for="br-pocket-corner" data-i18n="braille.pocketCorner">Corner radius (mm)</label>
+            <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.pocketCorner"></span>
+            <input type="range" id="br-pocket-corner" min="0" max="2" step="0.05" value="0.4" />
+            <input type="number" class="val" id="br-pocket-corner-val" value="0.4" min="0" max="2" step="0.05" data-wheel-decimals="2" />
+            <button class="br-reset-btn" data-key="pocketCorner" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
 
           <div class="form-row">
             <label class="checkbox-label" for="br-black-show">
@@ -392,6 +398,7 @@
             <span class="br-info" tabindex="0" data-i18n-tip="braille.tt.rotation"></span>
             <input type="range" id="br-rotation" min="-180" max="180" step="1" value="0" />
             <input type="number" class="val" id="br-rotation-val" value="0" min="-180" max="180" step="1" />
+            <button id="br-rotation-reset" class="br-reset-btn hidden" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
 
           <div class="form-row slider-row br-position-row hidden" id="br-position-row">
@@ -406,6 +413,7 @@
               <input type="number" class="val" id="br-pos-bottom" step="0.5" />
               <span class="braille-pos-unit" data-i18n="braille.posFromBottom">mm von unten</span>
             </span>
+            <button id="br-position-reset" class="br-reset-btn hidden" data-i18n-title="braille.resetParamTitle" title="Back to the default value" aria-label="Back to the default value"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           </div>
 
           <div id="braille-placements" class="braille-placements"></div>
