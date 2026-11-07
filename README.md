@@ -35,8 +35,11 @@ Load a model, type a word, place Braille on its surfaces, and export a print-rea
 - **Triplanar** (default) — blends three planar projections based on surface normals; best for complex shapes
 - **Cubic (Box)** — projects from 6 box faces with edge-seam blending and smart axis dominance
 - **Cylindrical** — wraps texture around a cylindrical axis with configurable cap angle
+- **Outline wrap** — wraps the texture along the part's outline around Z instead of by angle, so a regular pattern keeps its cell size and runs unbroken around the corners of box-like parts; a whole number of repeats fits every height, so it closes with no seam. Where the outline does not go around the part's centre (a C shape), it maps as Cylindrical. A texture rotation other than a multiple of 90° shows the seam
 - **Spherical** — maps texture spherically around the object
 - **Planar XY / XZ / YZ** — flat axis-aligned projections
+- **Stamp mode** — places the texture once instead of tiling it (logos, badges, labels): click the model to position it, drag to move, scroll to resize; works with Surface normal, Planar and Cylindrical. Only the surface facing the stamp gets it, and exports refine only the faces it touches
+- **Surface normal** (Stamp mode) — projects along the surface under the stamp, so it lies flat on slopes and curves
 
 ### UV & Transform Controls
 - **Scale U/V** — independent or locked scaling (0.05–10×, logarithmic)
@@ -76,7 +79,7 @@ Load a model, type a word, place Braille on its surfaces, and export a print-rea
 
 ### 3D Viewer
 - **Orbit / pan / zoom** controls
-- **3Dconnexion SpaceMouse** — fly the view with the puck in Chrome and Edge: push/pull to zoom, slide to pan, tilt and twist to orbit (connects after the first touch of the puck)
+- **3Dconnexion SpaceMouse** — fly the view with the puck in Chrome and Edge: push/pull to zoom, slide to pan, tilt and twist to orbit (connects after the first touch of the puck). The model follows the cap; the SpaceMouse button in the bottom bar sets the speed and reverses single axes
 - **Wireframe toggle** — visualise mesh topology
 - **Section view** — cut the model open with a plane to see which inner surfaces (holes, cavities, the inside of hollow parts) get textured, and mask them right through the cut; X/Y/Z snap, flip, and drag handles to move or tilt the cut
 - **Mesh info** — live triangle count, file size, bounding-box dimensions
@@ -145,7 +148,8 @@ js/
   sidebarToggle.js    # Collapse / expand tab for the right-hand sidebar (settings or gallery)
   previewMaterial.js  # Three.js material for live & displacement preview
   previewPipeline.js  # 3D-preview mesh build (runs in previewWorker.js)
-  mapping.js          # UV projection logic (7 modes)
+  mapping.js          # UV projection logic (8 modes, plus Surface normal for stamps)
+  outlineWrap.js      # Outline wrap tables and places (mode 8; built in outlineWrapWorker.js)
   displacement.js     # Vertex displacement baking
   subdivision.js      # Adaptive mesh subdivision
   decimation.js       # QEM mesh decimation

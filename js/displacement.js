@@ -4,7 +4,8 @@
  */
 
 import { THREE } from './threeCompat.js';
-import { computeUV, getDominantCubicAxis, getCubicBlendWeights, scaleMmToRelative } from './mapping.js';
+import { computeUV, getDominantCubicAxis, getCubicBlendWeights, scaleMmToRelative, isStampActive, stampFrame, stampUV,
+         isRotateAroundZ, rotateSideFrame } from './mapping.js';
 import { QuantizedPointMap } from './meshIndex.js';
 
 // ── Sharp-crease handling (see _findCreases / _creaseMoves) ─────────────────
@@ -82,6 +83,8 @@ export function applyDisplacement(geometry, imageData, imgWidth, imgHeight, sett
  *   hardFaces  Uint8Array|null    per-triangle flag: fully untextured by the
  *              layer's hard mask (their positions pin the layer's boundary)
  *   blendAdd   boolean            add to the layers below instead of covering them
+ *   stampDepth object|null        a stamp layer's occlusion depth map
+ *              (mapping.js buildStampDepth): only the surface nearest the stamp gets it
  *   legacy     boolean            read the mask from the geometry's
  *              excludeWeight / softExclude attributes instead
  * @param {object} settings  global settings (bottomAngleLimit, topAngleLimit,
@@ -175,6 +178,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     l._zoneAreaX = new Float64Array(uniqueCount);
     l._zoneAreaY = new Float64Array(uniqueCount);
     l._zoneAreaZ = new Float64Array(uniqueCount);
+    l._sideNrm = _sideNormalFn(l.settings);
   }
 
   // maskedFrac: [maskedArea, totalArea] per unique vertex (replaces maskedFracMap)
@@ -209,6 +213,9 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
       l._softMax = l.exclude ? new Float32Array(uniqueCount) : null;
       l._hardPos = l.hardFaces ? new Uint8Array(uniqueCount) : null;
     }
+    // The same per crease group, so a sharp edge between a face the layer
+    // textures and one it leaves alone can hold only the latter at 0.
+    l._hardGroup = l._hardPos && creases ? new Uint8Array(creases.groupCount) : null;
   }
 
   for (let t = 0; t < count; t += 3) {
@@ -253,7 +260,8 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
       for (const l of cubicLayers) {
         const cubicBlend = l.settings.mappingBlend ?? 0;
         const cubicBandWidth = l.settings.seamBandWidth ?? 0.35;
-        const w = getCubicBlendWeights(unitFaceNrm, cubicBlend, cubicBandWidth);
+        const w = getCubicBlendWeights(l._sideNrm(unitFaceNrm.x, unitFaceNrm.y, unitFaceNrm.z),
+          cubicBlend, cubicBandWidth);
         l._czX = w.x * faceArea;
         l._czY = w.y * faceArea;
         l._czZ = w.z * faceArea;
@@ -307,6 +315,8 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
         creases.inZ[k] += cenZ - c.z;
         creases.area[k] += faceArea;
         if (faceMasked) creases.masked[k] += faceArea;
+        if (userExcluded) creases.excluded[k] = 1;
+        for (const l of layers) if (l._hardGroup && l.hardFaces[t / 3]) l._hardGroup[k] = 1;
       }
     }
   }
@@ -479,6 +489,16 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     const blockCover = blockDesc ? new Float32Array(uniqueCount) : null;
     const groupBlockCover = (blockDesc && creases) ? new Float32Array(creases.groupCount) : null;
 
+    // Stamp layer: one image, no tiling. Coverage (footprint × facing) is
+    // sampled alongside the grey and scales both the displacement and how
+    // much the layer covers the ones below. Facing uses the unsmoothed
+    // normal (a crease group's own normal), so the cut-off follows the real
+    // surface instead of bleeding past hard edges.
+    const stamp = isStampActive(lset) ? stampFrame(settingsWithAspect, bounds) : null;
+    if (stamp && layer.stampDepth) stamp.depth = layer.stampDepth;   // occlusion (mapping.js buildStampDepth)
+    const dispCacheCov = stamp ? new Float64Array(uniqueCount) : null;
+    const groupCov = stamp && creases ? new Float64Array(creases.groupCount) : null;
+
     const md = Math.max(bounds.size.x, bounds.size.y, bounds.size.z, 1e-6);
     const relScale = scaleMmToRelative(6, lset, bounds);
     const rotRad = (lset.rotation ?? 0) * Math.PI / 180;
@@ -487,6 +507,9 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
     const cubicGrey = (wX, wY, wZ, fx, fy, fz) => _cubicGrey(
       imageData.data, imgWidth, imgHeight, tmpPos, wX, wY, wZ, fx, fy, fz,
       bounds, md, relScale, lset, rotRad, aspectU, aspectV);
+    // Normal used for the cubic blend weights: the Z-rotated one when the
+    // layer rotates its side projections around Z (identity otherwise).
+    const sideNrm = _sideNormalFn(lset);
 
     for (let i = 0; i < count; i++) {
       const vid = vertexId[i];
@@ -508,9 +531,14 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
               tmpPos.x, tmpPos.y, tmpPos.z, blendNrmX[node], blendNrmY[node], blendNrmZ[node]);
             groupGrey[k] = s.grey;
             groupBlockCover[k] = s.cover;
+          } else if (stamp) {
+            tmpNrm.set(initX[node], initY[node], initZ[node]);
+            const st = stampUV(tmpPos, tmpNrm, stamp);
+            groupGrey[k] = _stampGrey(imageData.data, imgWidth, imgHeight, st);
+            groupCov[k] = st.cover;
           } else if (lset.mappingMode === 6 /* MODE_CUBIC */) {
             const w = getCubicBlendWeights(
-              { x: blendNrmX[node], y: blendNrmY[node], z: blendNrmZ[node] }, cubicBlend, cubicBandWidth);
+              sideNrm(blendNrmX[node], blendNrmY[node], blendNrmZ[node]), cubicBlend, cubicBandWidth);
             groupGrey[k] = cubicGrey(w.x, w.y, w.z, creases.nrmX[k], creases.nrmY[k], creases.nrmZ[k]);
           } else {
             tmpNrm.set(blendNrmX[node], blendNrmY[node], blendNrmZ[node]);
@@ -545,10 +573,18 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
       // normals broadly aligned read ≈1; perfectly cancelling pairs read 0.
       // 0.5 is loose enough that a 90° cube edge (≈0.71) still uses the smooth
       // path, but a near-180° fold falls back to face-area zones.
+      if (stamp) {
+        tmpNrm.set(smoothNrmX[vid], smoothNrmY[vid], smoothNrmZ[vid]);
+        const st = stampUV(tmpPos, tmpNrm, stamp);
+        dispCacheVal[vid] = _stampGrey(imageData.data, imgWidth, imgHeight, st);
+        dispCacheCov[vid] = st.cover;
+        continue;
+      }
+
       if (lset.mappingMode === 6 /* MODE_CUBIC */) {
         let wX = 0, wY = 0, wZ = 0;
         if (smoothNrmReliability[vid] > 0.5) {
-          const sn = { x: blendNrmX[vid], y: blendNrmY[vid], z: blendNrmZ[vid] };
+          const sn = sideNrm(blendNrmX[vid], blendNrmY[vid], blendNrmZ[vid]);
           const w = getCubicBlendWeights(sn, cubicBlend, cubicBandWidth);
           wX = w.x; wY = w.y; wZ = w.z;
         } else {
@@ -599,6 +635,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
       const falloffFactor = falloffArr ? falloffArr[vid] : 1.0;
       let disp = pinned ? 0 : falloffFactor * (1 - maskedFrac) * centeredGrey * amplitude;
       if (softMax) disp *= 1 - softMax[vid];
+      if (dispCacheCov) disp *= dispCacheCov[vid];
       if (li === 0) {
         acc[vid] = disp;
       } else if (blendAdd) {
@@ -607,24 +644,42 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
         // "Over": where this layer covers, the layers below fade out.
         let cover = pinned ? 0 : (softMax ? 1 - softMax[vid] : 1);
         if (blockDesc) cover *= blockCover ? blockCover[vid] : 0;
+        if (dispCacheCov) cover *= dispCacheCov[vid];
         acc[vid] = acc[vid] * (1 - cover) + disp;
       }
     }
     // Crease groups fold the same way; angle masking is per group (a face
     // group is masked or it isn't), everything else is per position.
+    //
+    // Pinning is per group too (issue #138): on a sharp edge between a face
+    // the layer textures and one it leaves alone, only the untextured face is
+    // held at height 0. _creaseMoves then puts the edge where the displaced
+    // textured face meets the untextured face's own plane, so the texture
+    // runs at full height right up to the edge and the untextured face just
+    // grows to meet it, flat and watertight (on a 90° edge it is extended by
+    // exactly the texture height). Pinning the whole position instead pulled
+    // the textured face down to 0 over its last row: a bevel along the edge.
+    // Its no-intrusion guard keeps concave edges pinned as before. With a
+    // mask falloff the layer asked for a fade at its mask edges, so its
+    // creases stay fully pinned.
     if (creases) {
+      const hardGroup = layer._hardGroup;
+      const perGroupPins = !(lset.boundaryFalloff > 0);
       for (let s = 0; s < creases.count; s++) {
         if (!creases.active[s]) continue;
         const vid = creases.vidOf[s];
-        const pinned = isPinned(vid);
+        const posPinned = isPinned(vid);
         const falloffFactor = falloffArr ? falloffArr[vid] : 1.0;
         for (let g = 0; g < creases.groups[s]; g++) {
           const k = creases.start[s] + g;
+          const pinned = posPinned && (!perGroupPins || creases.excluded[k] === 1 || (hardGroup !== null && hardGroup[k] === 1));
+          if (posPinned && !pinned) creases.released[s] = 1;
           const gArea = creases.area[k];
           const maskedFrac = blockDesc ? 0 : (gArea > 0 ? creases.masked[k] / gArea : 0);
           const centeredGrey = symmetric ? (groupGrey[k] - 0.5) : groupGrey[k];
           let disp = pinned ? 0 : falloffFactor * (1 - maskedFrac) * centeredGrey * amplitude;
           if (softMax) disp *= 1 - softMax[vid];
+          if (groupCov) disp *= groupCov[k];
           if (li === 0) {
             groupAcc[k] = disp;
           } else if (blendAdd) {
@@ -632,13 +687,14 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
           } else {
             let cover = pinned ? 0 : (softMax ? 1 - softMax[vid] : 1);
             if (blockDesc) cover *= groupBlockCover ? groupBlockCover[k] : 0;
+            if (groupCov) cover *= groupCov[k];
             groupAcc[k] = groupAcc[k] * (1 - cover) + disp;
           }
         }
       }
     }
 
-    layer._softMax = null; layer._hardPos = null;
+    layer._softMax = null; layer._hardPos = null; layer._hardGroup = null;
     layer._zoneAreaX = layer._zoneAreaY = layer._zoneAreaZ = null;
     if (onProgress) onProgress(0.5 * (li + 1) / layers.length);
   }
@@ -649,6 +705,7 @@ export function applyDisplacementLayers(geometry, layers, settings, bounds, onPr
 
   const REPORT_EVERY = 5000;
   const moves = creases ? _creaseMoves(creases, groupAcc, smoothNrmX, smoothNrmY, smoothNrmZ) : null;
+  if (moves) _guardReleasedFolds(creases, moves, posAttr, vertexId, acc, smoothNrmX, smoothNrmY, smoothNrmZ);
 
   for (let i = 0; i < count; i++) {
     tmpPos.fromBufferAttribute(posAttr, i);
@@ -802,6 +859,12 @@ function _findCreases(nrmAttr, vertexId, uniqueCount) {
     nrmX: new Float64Array(n), nrmY: new Float64Array(n), nrmZ: new Float64Array(n),
     inX: new Float64Array(n), inY: new Float64Array(n), inZ: new Float64Array(n),
     area: new Float64Array(n), masked: new Float64Array(n),
+    // 1 where a face of the group is excluded for every layer (excludeWeight:
+    // the user mask and the angle masks) — the group is held at height 0.
+    excluded: new Uint8Array(n),
+    // Per slot: 1 where some layer pins the position but not all of its
+    // groups (the edge between a textured and an untextured face moves).
+    released: new Uint8Array(nCand),
     active: null, extraStart: null, extraNodes: 0,
   };
 }
@@ -979,22 +1042,120 @@ function _creaseMoves(cr, groupAcc, snX, snY, snZ) {
   return out;
 }
 
+// Released edges (issue #138) move positions that pinning used to hold still,
+// within the plane of the untextured face. That face's triangles can have any
+// shape (untextured regions are only refined next to the mask boundary, and
+// regularizing leaves thin ones there too), and a thin triangle turns over
+// when its edge points rise by different heights. So every triangle touching
+// a released position is checked after the move: one that would face the
+// other way halves the moves of its released corners, up to
+// FOLD_GUARD_ROUNDS times, and whatever still folds then is held at 0, the
+// behaviour before #138. Positions that were never pinned are not touched.
+const FOLD_GUARD_ROUNDS = 6;
+const FOLD_GUARD_MIN_COS = 0.05;   // a triangle tilted past ~87° counts as folded
+function _guardReleasedFolds(cr, moves, posAttr, vertexId, acc, snX, snY, snZ) {
+  let anyReleased = false;
+  for (let s = 0; s < cr.count; s++) if (cr.released[s]) { anyReleased = true; break; }
+  if (!anyReleased) return;
+
+  // Keep the untextured faces exactly flat: the least-squares solve leaves a
+  // little of its pull toward the averaged normal in d·n_g for an untextured
+  // group g (up to a few hundredths of a mm at the texture's peaks). Removing
+  // it moves the point onto the planes of all of them; a few passes settle a
+  // corner where two untextured planes meet at other than 90°.
+  for (let s = 0; s < cr.count; s++) {
+    if (!cr.released[s]) continue;
+    const base = cr.start[s];
+    let dx = moves[s * 3], dy = moves[s * 3 + 1], dz = moves[s * 3 + 2];
+    for (let round = 0; round < 3; round++) {
+      for (let g = 0; g < cr.groups[s]; g++) {
+        const k = base + g;
+        if (cr.excluded[k] !== 1 || !(cr.area[k] > 0)) continue;
+        const nx = cr.nrmX[k], ny = cr.nrmY[k], nz = cr.nrmZ[k];
+        const dn = dx * nx + dy * ny + dz * nz;
+        dx -= dn * nx; dy -= dn * ny; dz -= dn * nz;
+      }
+    }
+    moves[s * 3] = dx; moves[s * 3 + 1] = dy; moves[s * 3 + 2] = dz;
+  }
+
+  const pos = posAttr.array;
+  const triCount = vertexId.length / 3;
+  const cand = [];
+  for (let t = 0; t < triCount; t++) {
+    for (let k = 0; k < 3; k++) {
+      const s = cr.slotOf[vertexId[t * 3 + k]];
+      if (s >= 0 && cr.released[s]) { cand.push(t); break; }
+    }
+  }
+
+  const scale = new Float64Array(cr.count).fill(1);
+  const P = new Float64Array(9);
+  const place = (t) => {
+    for (let k = 0; k < 3; k++) {
+      const i = t * 3 + k, vid = vertexId[i], s = cr.slotOf[vid];
+      let dx, dy, dz;
+      if (s >= 0) {
+        const f = cr.released[s] ? scale[s] : 1;
+        dx = moves[s * 3] * f; dy = moves[s * 3 + 1] * f; dz = moves[s * 3 + 2] * f;
+      } else {
+        dx = snX[vid] * acc[vid]; dy = snY[vid] * acc[vid]; dz = snZ[vid] * acc[vid];
+      }
+      P[k * 3] = pos[i * 3] + dx; P[k * 3 + 1] = pos[i * 3 + 1] + dy; P[k * 3 + 2] = pos[i * 3 + 2] + dz;
+    }
+  };
+  for (let round = 0; round <= FOLD_GUARD_ROUNDS; round++) {
+    let bad = 0;
+    for (const t of cand) {
+      const b = t * 9;
+      const ax = pos[b + 3] - pos[b], ay = pos[b + 4] - pos[b + 1], az = pos[b + 5] - pos[b + 2];
+      const bx = pos[b + 6] - pos[b], by = pos[b + 7] - pos[b + 1], bz = pos[b + 8] - pos[b + 2];
+      const n0x = ay * bz - az * by, n0y = az * bx - ax * bz, n0z = ax * by - ay * bx;
+      const l0 = Math.sqrt(n0x * n0x + n0y * n0y + n0z * n0z);
+      if (!(l0 > 1e-18)) continue;
+      place(t);
+      const cx = P[3] - P[0], cy = P[4] - P[1], cz = P[5] - P[2];
+      const ex = P[6] - P[0], ey = P[7] - P[1], ez = P[8] - P[2];
+      const n1x = cy * ez - cz * ey, n1y = cz * ex - cx * ez, n1z = cx * ey - cy * ex;
+      const l1 = Math.sqrt(n1x * n1x + n1y * n1y + n1z * n1z);
+      if (n0x * n1x + n0y * n1y + n0z * n1z > FOLD_GUARD_MIN_COS * l0 * l1 && l1 > 1e-18) continue;
+      bad++;
+      for (let k = 0; k < 3; k++) {
+        const s = cr.slotOf[vertexId[t * 3 + k]];
+        if (s >= 0 && cr.released[s]) scale[s] = round < FOLD_GUARD_ROUNDS ? scale[s] * 0.5 : 0;
+      }
+    }
+    if (bad === 0) break;
+  }
+  for (let s = 0; s < cr.count; s++) {
+    if (!cr.released[s] || scale[s] === 1) continue;
+    moves[s * 3] *= scale[s]; moves[s * 3 + 1] *= scale[s]; moves[s * 3 + 2] *= scale[s];
+  }
+}
+
 // ── Texture sampling helpers (Pass 2) ────────────────────────────────────────
 
 /** Cubic projection: blend the three axis projections by (wX, wY, wZ); the
  *  sign of (fx, fy, fz) picks each projection's mirror side. */
 function _cubicGrey(data, w, h, pos, wX, wY, wZ, fx, fy, fz, bounds, md, relScale, settings, rotRad, aspectU, aspectV) {
   let grey = 0;
+  // Side projections: either in-plane rotation (default) or the Z-rotated
+  // frame with no in-plane rotation (rotateAroundZ) — see mapping.js.
+  let sideX = pos.x - bounds.min.x, sideY = pos.y - bounds.min.y, sideFx = fx, sideFy = fy, sideRot = rotRad;
+  if ((wX > 0 || wY > 0) && isRotateAroundZ(settings)) {
+    const sf = rotateSideFrame(pos.x, pos.y, fx, fy, bounds, Math.cos(rotRad), Math.sin(rotRad));
+    sideX = sf.x; sideY = sf.y; sideFx = sf.nx; sideFy = sf.ny; sideRot = 0;
+  }
   if (wX > 0) { // X-dominant → YZ projection
-    let rawU = (pos.y-bounds.min.y)/md;
-    if (fx < 0) rawU = -rawU;
-    const uv = _cubicUV(rawU, (pos.z-bounds.min.z)/md, relScale, settings, rotRad, aspectU, aspectV);
+    let rawU = sideY/md;
+    if (sideFx < 0) rawU = -rawU;
+    const uv = _cubicUV(rawU, (pos.z-bounds.min.z)/md, relScale, settings, sideRot, aspectU, aspectV);
     grey += sampleBilinear(data, w, h, uv.u, uv.v) * wX;
   }
   if (wY > 0) { // Y-dominant → XZ projection
-    let rawU = (pos.x-bounds.min.x)/md;
-    if (fy > 0) rawU = -rawU;
-    const uv = _cubicUV(rawU, (pos.z-bounds.min.z)/md, relScale, settings, rotRad, aspectU, aspectV);
+    let rawU = sideX/md;
+    if (sideFy > 0) rawU = -rawU;
+    const uv = _cubicUV(rawU, (pos.z-bounds.min.z)/md, relScale, settings, sideRot, aspectU, aspectV);
     grey += sampleBilinear(data, w, h, uv.u, uv.v) * wY;
   }
   if (wZ > 0) { // Z-dominant → XY projection
@@ -1004,6 +1165,30 @@ function _cubicGrey(data, w, h, pos, wX, wY, wZ, fx, fy, fz, bounds, md, relScal
     grey += sampleBilinear(data, w, h, uv.u, uv.v) * wZ;
   }
   return grey;
+}
+
+/**
+ * Stamp grey at a stampUV result. The UV is clamped half a texel inside the
+ * image (clamp-to-edge), so the bilinear blend never wraps the stamp's
+ * opposite border in; the shader clamps the same way.
+ */
+function _stampGrey(data, w, h, st) {
+  const hu = 0.5 / w, hv = 0.5 / h;
+  return sampleBilinear(data, w, h,
+    Math.min(Math.max(st.u, hu), 1 - hu),
+    Math.min(Math.max(st.v, hv), 1 - hv));
+}
+
+/**
+ * Normal → normal used for a cubic layer's blend weights: rotated about Z by
+ * the layer's Rotation when it rotates its side projections around Z (so the
+ * projection zones turn with the texture), the plain normal otherwise.
+ */
+function _sideNormalFn(settings) {
+  if (!isRotateAroundZ(settings)) return (x, y, z) => ({ x, y, z });
+  const r = (settings.rotation ?? 0) * Math.PI / 180;
+  const c = Math.cos(r), s = Math.sin(r);
+  return (x, y, z) => ({ x: c * x - s * y, y: s * x + c * y, z });
 }
 
 /** Every other mode: computeUV (mapping.js) with `nrm` as the blend normal. */

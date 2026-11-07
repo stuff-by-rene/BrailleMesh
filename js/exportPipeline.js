@@ -33,6 +33,8 @@
  *                   hardFaces Uint8Array|null per source face, 1 = fully
  *                             untextured by the layer's hard mask
  *                   blendAdd  boolean
+ *                   stampDepth  a stamp's occlusion depth map
+ *                             (mapping.js buildStampDepth) or null
  *   settings      plain settings snapshot (structured-clone safe)
  *   bounds        {min,max,size,center} as {x,y,z} objects or Vector3s
  *   regularizeOpts  opts object for regularizeMesh
@@ -292,7 +294,7 @@ export async function runExportPipeline(input, onEvent = () => {}, shouldAbort =
         }
         return {
           imageData: l.imageData, imgWidth: l.imgWidth, imgHeight: l.imgHeight,
-          settings: l.settings, blendAdd: !!l.blendAdd, hardFaces,
+          settings: l.settings, blendAdd: !!l.blendAdd, hardFaces, stampDepth: l.stampDepth || null,
           exclude: l.exclude ? interpolateFromParents(subPos, faceParentId, input.positions, l.exclude) : null,
         };
       });

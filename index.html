@@ -176,6 +176,28 @@
           <button type="button" class="section-btn" data-section-axis="z" data-i18n-title="ui.sectionZTitle" title="Cut perpendicular to the Z axis">Z</button>
           <button type="button" class="section-btn" id="section-flip" data-i18n="ui.sectionFlip" data-i18n-title="ui.sectionFlipTitle" title="Show the other half">Flip</button>
         </div>
+        <!-- SpaceMouse speed and reversed axes (js/spaceMousePanel.js); shown once a puck has been seen in this browser -->
+        <div id="spacemouse-wrap" class="spacemouse-wrap hidden">
+          <button type="button" id="spacemouse-btn" class="spacemouse-btn" aria-expanded="false" aria-controls="spacemouse-panel"
+            data-i18n="ui.spaceMouse" data-i18n-title="ui.spaceMouseTitle" title="SpaceMouse speed and direction">SpaceMouse</button>
+          <div id="spacemouse-panel" class="spacemouse-panel hidden" role="dialog" data-i18n-aria-label="ui.spaceMouseTitle" aria-label="SpaceMouse speed and direction">
+            <div class="spacemouse-row">
+              <label for="spacemouse-speed" data-i18n="ui.spaceMouseSpeed">Speed</label>
+              <input type="range" id="spacemouse-speed" min="0.25" max="2" step="0.05" value="1" />
+              <output id="spacemouse-speed-val" for="spacemouse-speed">1.00×</output>
+            </div>
+            <div class="spacemouse-label" data-i18n="ui.spaceMouseReverse">Reverse</div>
+            <div class="spacemouse-axes" role="group" data-i18n-aria-label="ui.spaceMouseReverse" aria-label="Reverse">
+              <button type="button" data-sm-axis="tx" aria-pressed="false" data-i18n="ui.spaceMousePanX">Pan left/right</button>
+              <button type="button" data-sm-axis="tz" aria-pressed="false" data-i18n="ui.spaceMousePanY">Pan up/down</button>
+              <button type="button" data-sm-axis="ty" aria-pressed="false" data-i18n="ui.spaceMouseZoom">Zoom</button>
+              <button type="button" data-sm-axis="rx" aria-pressed="false" data-i18n="ui.spaceMouseTilt">Tilt</button>
+              <button type="button" data-sm-axis="rz" aria-pressed="false" data-i18n="ui.spaceMouseSpin">Spin</button>
+            </div>
+            <p id="spacemouse-status" class="spacemouse-note"></p>
+            <p class="spacemouse-note" data-i18n="ui.spaceMouseNote">By default the puck moves the model, like the 3Dconnexion driver does. The browser reads the puck directly, so the driver's own speed and reversed axes don't apply here. Set them here instead.</p>
+          </div>
+        </div>
 
         <div class="viewport-controls-hint" data-i18n="ui.controlsHint">Left drag: orbit &nbsp;·&nbsp; Right drag: pan &nbsp;·&nbsp; Scroll: zoom</div>
       </div>
@@ -486,15 +508,18 @@
         <div class="form-row">
           <label for="mapping-mode" data-i18n="labels.mode">Mode</label>
           <select id="mapping-mode">
+            <option value="7" hidden disabled data-i18n-opt="projection.surfaceNormal">Surface normal</option>
             <option value="5" selected data-i18n-opt="projection.triplanar">Triplanar</option>
             <option value="6" data-i18n-opt="projection.cubic">Cubic (Box)</option>
             <option value="3" data-i18n-opt="projection.cylindrical">Cylindrical</option>
+            <option value="8" data-i18n-opt="projection.outlineWrap">Outline wrap</option>
             <option value="4" data-i18n-opt="projection.spherical">Spherical</option>
             <option value="0" data-i18n-opt="projection.planarXY">Planar XY</option>
             <option value="1" data-i18n-opt="projection.planarXZ">Planar XZ</option>
             <option value="2" data-i18n-opt="projection.planarYZ">Planar YZ</option>
           </select>
         </div>
+        <p id="outline-wrap-note" class="advanced-blurb projection-note hidden" data-i18n="ui.outlineWrapFallback">Outline wrap cannot follow this shape's outline, so it maps as Cylindrical.</p>
         <div class="form-row slider-row" style="display:none">
           <label for="seam-blend" data-i18n="labels.seamBlend" data-i18n-title="tooltips.seamBlend" title="Softens the hard seam where projection faces meet. Effective for Cubic and Cylindrical modes.">Seam Blend ⓘ</label>
           <input type="range" id="seam-blend" min="0" max="1" step="0.01" value="1" />
@@ -531,6 +556,23 @@
               title="Reset to AABB center and AABB-derived radius.">Reset</button>
           </div>
         </div>
+        <div class="form-row" id="stamp-mode-row">
+          <div class="cylinder-axis-controls">
+            <button id="stamp-mode-btn" type="button" class="cylinder-axis-btn" aria-pressed="false"
+              data-i18n="ui.stampMode"
+              data-i18n-title="tooltips.stamp"
+              title="Apply the texture once instead of tiling it, for logos, badges and labels. Click the model to position it; Size U and V set its size. While it is on, only the Surface normal, Planar and Cylindrical projections are available; Surface normal lines the stamp up with the surface under its centre.">Stamp mode</button>
+          </div>
+        </div>
+        <div class="form-row" id="stamp-place-row" style="display:none">
+          <div class="cylinder-axis-controls">
+            <button id="stamp-place-btn" type="button" class="cylinder-axis-btn"
+              data-i18n="ui.stampPlace"
+              data-i18n-title="tooltips.stampPlace"
+              title="Click the model to centre the stamp there. Hold and drag to slide it along the surface.">Position on model</button>
+          </div>
+        </div>
+        <p id="stamp-hint" class="advanced-blurb stamp-hint" style="display:none" data-i18n="ui.stampHint">Drag the stamp on the model to move it, then scroll to resize it.</p>
       </section>
 
       <!-- Displacement -->
@@ -611,6 +653,12 @@
           <label for="rotation" data-i18n="labels.rotation">Rotation</label>
           <input type="range" id="rotation" min="0" max="360" step="1" value="0" />
           <input type="number" class="val" id="rotation-val" value="0" min="0" max="360" step="1" />
+        </div>
+        <div class="form-row" id="rotate-around-z-row">
+          <label class="checkbox-label" for="rotate-around-z" data-i18n-title="tooltips.rotateAroundZ" title="Triplanar / Cubic: turn the side projections around the vertical axis by the Rotation angle instead of rotating the texture inside each side face. Directional patterns like wood grain then run the same way on top and side faces.">
+            <input type="checkbox" id="rotate-around-z" />
+            <span data-i18n="labels.rotateAroundZ">Rotate side faces around Z ⓘ</span>
+          </label>
         </div>
       </section>
 
@@ -1010,6 +1058,16 @@
       </ol>
       <p class="welcome-note" style="margin:.6em 0 0;font-size:.85rem;opacity:.75">For displacement textures, switch to the <strong>Texture</strong> workspace in the header.</p>
 
+      <h3 class="welcome-heading">New in this release <span class="welcome-date">&mdash; November 2026</span></h3>
+      <!-- Add each release to changelog.html as well, which keeps the full history. -->
+      <ul class="welcome-changelog">
+        <li><strong>New in v1.5.2</strong> &mdash; textures run right up to edges next to untextured faces, a new <strong>Outline wrap</strong> projection, SpaceMouse speed and reverse settings, and Czech.</li>
+        <li><strong>v1.5.1</strong> &mdash; brush strokes no longer turn into a camera orbit when another mouse button is tapped, and switching between Include and Exclude keeps your brush.</li>
+        <li><strong>v1.5.0</strong> &mdash; <strong>Stamp mode</strong> (under Projection) places a texture once instead of tiling it, for logos, badges and labels.</li>
+        <li><strong>v1.4.3</strong> &mdash; five <strong>tire treads</strong> in a new Tires category, and the <a href="changelog.html" target="_blank" rel="noopener">full changelog</a>.</li>
+        <li><strong>v1.4.2</strong> &mdash; <strong>3Dconnexion SpaceMouse</strong> support, thanks to Alon Mishne, and a Standard circle brush that marks whole triangles.</li>
+      </ul>
+
       <h3 class="welcome-heading">What BrailleMesh adds <span class="welcome-date">&mdash; October 2026</span></h3>
       <ul class="welcome-changelog">
         <li><strong>The Braille workspace</strong> (open by default): type a word, add it as a block, drag it onto any face of the model. Eight Braille systems: German Vollschrift and Kurzschrift, English UEB Grade 1 and 2, French, Spanish, Italian, Portuguese. Every placement keeps its own position, rotation and name; clicking it swings the view there.</li>
@@ -1017,7 +1075,7 @@
         <li><strong>Readable caption</strong>: on request, the word is also written as black print under each Braille line &mdash; raised or engraved &mdash; so sighted readers can check it.</li>
         <li><strong>Separate-part export</strong>: in the exported 3MF the Braille is its own printable volume beside the base body, so you can colour it independently in the slicer.</li>
         <li><strong>No default texture</strong>: the example cube starts plain; the map you had active in your last session comes back on its own.</li>
-        <li><strong>From the base project</strong> (BumpMesh v1.4.3 by CNC Kitchen): 101 displacement textures in eight categories, texture layers, section view, STEP import, SpaceMouse support, 16 languages. <a href="changelog.html" target="_blank" rel="noopener">Base project changelog</a>.</li>
+        <li><strong>From the base project</strong> (BumpMesh v1.5.2 by CNC Kitchen): 101 displacement textures in eight categories, texture layers, stamp mode, outline wrap, section view, STEP import, SpaceMouse support, 17 languages. <a href="changelog.html" target="_blank" rel="noopener">Base project changelog</a>.</li>
       </ul>
       <a class="welcome-history-link" href="changelog.html" target="_blank" rel="noopener">See the base project&rsquo;s full history &rarr;</a>
 

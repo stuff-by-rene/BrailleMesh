@@ -280,6 +280,48 @@
          the "Latest" badge follows the first entry automatically. -->
     <ol class="timeline" id="timeline">
 
+      <li class="release" id="v1.5.2">
+        <div class="release-meta">
+          <a class="version" href="#v1.5.2">v1.5.2</a>
+          <time datetime="2026-11-04">4 Nov 2026</time>
+        </div>
+        <h2>Textures up to the edge, Outline wrap</h2>
+        <ul>
+          <li>Where a textured face meets an untextured one on a sharp edge, the texture now keeps its full height right up to the edge instead of sloping down to it. The untextured face grows to meet it and stays flat. This also applies where walls meet the untextured bottom.</li>
+          <li><strong>Outline wrap</strong> projection: wraps the texture along the part&rsquo;s outline around Z, so a pattern keeps its size around the corners of box-like parts and closes without a seam. Thanks to Michail Yasonik.</li>
+          <li><strong>Rotate side faces around Z</strong> (Triplanar and Cubic): the Rotation turns the side projections around the vertical axis, so a directional pattern like wood grain runs the same way on top and side faces. Thanks to Vladyslav Kovalenko.</li>
+          <li>An output resolution you set yourself now carries over when you load the next model. Thanks to Vladyslav Kovalenko.</li>
+          <li>3Dconnexion SpaceMouse: the model now follows the cap on every axis (left/right pan and tilt were reversed), and a SpaceMouse button in the bottom bar sets the speed and reverses single axes.</li>
+          <li>Czech translation, thanks to Peter K.</li>
+        </ul>
+      </li>
+
+      <li class="release" id="v1.5.1">
+        <div class="release-meta">
+          <a class="version" href="#v1.5.1">v1.5.1</a>
+          <time datetime="2026-10-30">30 Oct 2026</time>
+        </div>
+        <h2>Steadier brush strokes</h2>
+        <ul>
+          <li>Tapping another mouse button during a brush stroke no longer ends the stroke and turns the rest of the drag into a camera orbit. The stroke carries on until you release the left button.</li>
+          <li>Switching between Include and Exclude now keeps the tool you were using, instead of swapping your brush for the fill tool. The switch still clears the layer&rsquo;s paint, as before.</li>
+        </ul>
+      </li>
+
+      <li class="release" id="v1.5.0">
+        <div class="release-meta">
+          <a class="version" href="#v1.5.0">v1.5.0</a>
+          <time datetime="2026-10-25">25 Oct 2026</time>
+        </div>
+        <h2>Stamp mode</h2>
+        <ul>
+          <li><strong>Stamp mode</strong>, under Projection, places a texture once instead of tiling it, for logos, badges and labels. Turn it on and click the model to position the stamp; drag it to move it, and scroll right after to resize it. Size U and V set its size, and Rotation turns it.</li>
+          <li>The new <strong>Surface normal</strong> projection, the default for stamps, lays the stamp flat on the surface under it, even on slopes and curves, and follows the surface as you drag. At an edge it stops instead of flipping onto the next face. Planar and Cylindrical can stamp too.</li>
+          <li>Only the surface facing the stamp gets it, not the parts hidden behind it. Smooth Mask fades the stamp&rsquo;s border.</li>
+          <li>Exports refine only the faces the stamp touches, so they finish faster, and with Preserve Untextured (on by default) the rest of the model keeps its original triangles.</li>
+        </ul>
+      </li>
+
       <li class="release" id="v1.4.3">
         <div class="release-meta">
           <a class="version" href="#v1.4.3">v1.4.3</a>

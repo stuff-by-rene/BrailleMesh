@@ -21,6 +21,7 @@ import { loadFullPreset, loadCustomTexture, IMAGE_PRESETS }  from './presetTextu
 import { initTextureGallery } from './textureGallery.js';
 import { getCustomTextureFile } from './customTextures.js';
 import { initSidebarToggle } from './sidebarToggle.js';
+import { initSpaceMousePanel } from './spaceMousePanel.js';
 import { createPreviewMaterial, updateMaterial, MAX_LAYERS } from './previewMaterial.js';
 import { subdivide }          from './subdivision.js';
 import { runExportPipeline }  from './exportPipeline.js';
@@ -33,7 +34,9 @@ import { PaintTree } from './paintTree.js';
 import { runFastDiagnostics, runExpensiveDiagnostics,
          getEdgePositions } from './meshValidation.js';
 import { t, tHtml, initLang, setLang, getLang, applyTranslations, TRANSLATIONS } from './i18n.js';
-import { getScaleReferenceLengths } from './mapping.js';
+import { getScaleReferenceLengths, isStampActive, stampFrame, stampUV, stampUntouchedFaces, buildStampDepth,
+         STAMP_DEPTH_RES, stampAxes, stampSurfaceAt, MODE_OUTLINE_WRAP } from './mapping.js';
+import { buildOutlineWrap, outlineWrapPlaces } from './outlineWrap.js';
 import { QuantizedPointMap } from './meshIndex.js';
 import { APP_VERSION } from './version.js';
 import { generateBrailleMap, BRAILLE_DEFAULTS, BRAILLE_LANGUAGES, BR_LOCK_DEPS } from './braille.js';
@@ -97,8 +100,15 @@ let maskModeChosen     = false;       // false until the user (or a loaded/seede
 let _lastHoverTriIdx   = -1;          // last triangle index used for hover preview
 let _lastHoverKey      = '';          // Standard circle brush: erase flag + faces of the last hover preview
 let placeOnFaceActive  = false;       // true while "Place on Face" mode is active
+let stampPlaceActive   = false;       // true while the next click on the model places the stamp
+let _stampDragging     = false;       // true from a stamp press until release (the stamp follows the cursor)
+let _stampGrab         = null;        // grab offset while dragging the patch itself (null = centre follows the cursor)
+let _stampLastSurface  = null;        // Surface normal: the surface point under the cursor on the previous drag frame
+let _stampWheelArmed   = false;       // after a stamp press: the wheel resizes the stamp until the next press elsewhere
+let _stampHoverCursor  = false;       // the 'move' cursor is showing over the stamp's patch
 let rotateActive       = false;       // true while rotate mode is active
 let rotateAngles       = { x: 0, y: 0, z: 0 };  // accumulated rotation in degrees
+let refineLengthUserSet = false;      // true once the user picks an output resolution (slider, field, wheel or Smart) — kept across model loads
 let _rotateOriginalPositions = null;  // Float32Array snapshot before any rotation
 const _raycaster       = new THREE.Raycaster();
 let _lastPaintHitPoint = null;        // THREE.Vector3 — last brush paint position for shift-line
@@ -119,6 +129,11 @@ const settings = {
   offsetU:       0.0,
   offsetV:       0.0,
   rotation:      0,
+  // Triplanar / Cubic: turn the side projections around Z by `rotation`
+  // instead of spinning the texture inside each side plane (mapping.js
+  // isRotateAroundZ) — keeps directional patterns heading the same way on
+  // top and side faces.
+  rotateAroundZ: false,
   refineLength:  1.0,
   maxTriangles:  750_000,
   lockScale:     true,
@@ -158,6 +173,20 @@ const settings = {
   cylinderCenterY:  null,
   cylinderRadius:   null,
   cylinderPanelMinimized: false,
+  // Stamp ("place once", surface normal, planar and cylindrical modes): the
+  // image appears once, centred on a picked surface point (model mm; null =
+  // bounds centre), on the surfaces facing stampSide (±1 along the projection
+  // axis; null = the mode's unmirrored side) — for Surface normal, facing
+  // along stampNormal (the surface normal at the centre; null = front).
+  // See mapping.js stampFrame.
+  stampOnce:    false,
+  stampCenterX: null,
+  stampCenterY: null,
+  stampCenterZ: null,
+  stampSide:    null,
+  stampNormalX: null,
+  stampNormalY: null,
+  stampNormalZ: null,
   // Regularize Mesh.  Two-step pipeline applied after the initial subdivide:
   // collapse sliver chains, then re-subdivide stretched edges back to a
   // multiple of refineLength.  Always on with these standard values — the
@@ -186,11 +215,13 @@ const settings = {
 // bottom handling, regularize knobs) stays global.
 const LAYER_KEYS = [
   'mappingMode', 'scaleU', 'scaleV', 'lockScale',
-  'offsetU', 'offsetV', 'rotation',
+  'offsetU', 'offsetV', 'rotation', 'rotateAroundZ',
   'amplitude', 'textureHeight', 'invertDisplacement', 'invertTexture', 'textureSmoothing',
   'symmetricDisplacement', 'mappingBlend', 'seamBandWidth', 'capAngle',
   'boundaryFalloff', 'boundaryFalloffCurve',
   'snapSeamlessWrap', 'cylinderCenterX', 'cylinderCenterY', 'cylinderRadius',
+  'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ',
 ];
 let layers = [];        // layer records, composition order (first = bottom); see _newLayer
 let activeLayer = 0;    // index into `layers` of the layer the sidebar edits
@@ -413,6 +444,8 @@ const invertTextureCheckbox = document.getElementById('invert-texture');
 const capAngleSlider         = document.getElementById('cap-angle');
 const capAngleVal            = document.getElementById('cap-angle-val');
 const capAngleRow            = document.getElementById('cap-angle-row');
+const rotateAroundZRow       = document.getElementById('rotate-around-z-row');
+const rotateAroundZCheckbox  = document.getElementById('rotate-around-z');
 const cylinderSnapRow        = document.getElementById('cylinder-snap-row');
 const cylinderSnapToggle     = document.getElementById('cylinder-snap-toggle');
 const cylinderAxisRow        = document.getElementById('cylinder-axis-row');
@@ -421,6 +454,11 @@ const cylinderResetBtn       = document.getElementById('cylinder-reset-btn');
 const cylinderPanel          = document.getElementById('cylinder-panel');
 const cylinderCanvas         = document.getElementById('cylinder-canvas');
 const cylinderPanelMinimize  = document.getElementById('cylinder-panel-minimize');
+const stampModeBtn           = document.getElementById('stamp-mode-btn');
+const stampPlaceRow          = document.getElementById('stamp-place-row');
+const stampPlaceBtn          = document.getElementById('stamp-place-btn');
+const stampHint              = document.getElementById('stamp-hint');
+const outlineWrapNote        = document.getElementById('outline-wrap-note');
 const boundaryFalloffSlider    = document.getElementById('boundary-falloff');
 const boundaryFalloffVal       = document.getElementById('boundary-falloff-val');
 const falloffCurveButtons      = {
@@ -639,7 +677,7 @@ const imprintClose   = document.getElementById('imprint-close');
 // ── Welcome / What's New popup ───────────────────────────────────────────────
 // Bump this date whenever the "What's New" bullets in index.html change to
 // re-show the popup to all returning visitors who previously dismissed it.
-const WELCOME_LAST_UPDATED = '2026-10-19';
+const WELCOME_LAST_UPDATED = '2026-11-04';
 const WELCOME_STORAGE_KEY  = 'stlt-welcome-seen';
 const welcomeLink     = document.getElementById('welcome-link');
 const welcomeOverlay  = document.getElementById('welcome-overlay');
@@ -695,8 +733,10 @@ function _currentTextureAspectU() {
 }
 
 // True when the active mapping mode wraps U around the model, so snapping the
-// U scale to integer tile counts can make the wrap seam disappear.
+// U scale to integer tile counts can make the wrap seam disappear. A stamp
+// never wraps — its size is the footprint the user typed.
 function _isSeamlessWrapMode() {
+  if (isStampActive(settings)) return false;
   return settings.mappingMode === 3 /* MODE_CYLINDRICAL */ ||
          settings.mappingMode === 4 /* MODE_SPHERICAL */;
 }
@@ -729,6 +769,7 @@ function _applyScaleU(v) {
   scaleUSlider.value = scaleToPos(v);
   scaleUVal.value = fmtScaleVal(v);
   if (settings.lockScale) { settings.scaleV = v; scaleVSlider.value = scaleToPos(v); scaleVVal.value = fmtScaleVal(v); }
+  _reorientNormalStamp();
   clearTimeout(previewDebounce); previewDebounce = setTimeout(updatePreview, 80);
 }
 
@@ -1326,6 +1367,7 @@ const gallery = initTextureGallery({
   setTurntable,
 });
 initSidebarToggle();
+initSpaceMousePanel();
 
 // The page itself never scrolls, but a mobile browser may still shift it to lift a focused input above
 // the on-screen keyboard, and overflow:hidden leaves the user no way back. Undo any such shift once the
@@ -1764,9 +1806,15 @@ function wireEvents() {
 
   // ── Settings ──
   mappingSelect.addEventListener('change', () => {
+    const prevMode = settings.mappingMode;
     settings.mappingMode = parseInt(mappingSelect.value, 10);
+    if (settings.mappingMode === 7 /* MODE_SURFACE_NORMAL */ && prevMode !== 7) _faceStampSurface(prevMode);
     capAngleRow.style.display = settings.mappingMode === 3 ? '' : 'none';
+    // Only the box-style projections (Triplanar, Cubic) have side projections to turn.
+    rotateAroundZRow.style.display = settings.mappingMode === 5 || settings.mappingMode === 6 ? '' : 'none';
     updateCylinderUIVisibility();
+    if (stampPlaceActive && !isStampActive(settings)) toggleStampPlace(false);
+    updateStampUIVisibility();
     // The wrap circumference is mode-specific (cylinder vs sphere equator),
     // so entering a wrap mode with snapping on re-snaps the U scale.
     if (settings.snapSeamlessWrap && _isSeamlessWrapMode()) {
@@ -1782,6 +1830,9 @@ function wireEvents() {
       _applyScaleU(settings.scaleU);
     }
   });
+
+  stampModeBtn.addEventListener('click', () => _setStampMode(!settings.stampOnce));
+  stampPlaceBtn.addEventListener('click', () => toggleStampPlace(!stampPlaceActive));
 
   cylinderAutofitBtn.addEventListener('click', () => {
     if (autoFitCylinderAxis()) {
@@ -1828,6 +1879,7 @@ function wireEvents() {
     scaleVSlider.value = scaleToPos(v);
     scaleVVal.value = fmtScaleVal(v);
     if (settings.lockScale) { settings.scaleU = v; scaleUSlider.value = scaleToPos(v); scaleUVal.value = fmtScaleVal(v); }
+    _reorientNormalStamp();
     clearTimeout(previewDebounce); previewDebounce = setTimeout(updatePreview, 80);
   };
   scaleVSlider.addEventListener('input', () => applyScaleV(posToScale(parseFloat(scaleVSlider.value))));
@@ -1878,6 +1930,13 @@ function wireEvents() {
     return v.toFixed(2);
   }, false);
   refineLenVal.addEventListener('change', checkResolutionWarning);
+  // Only genuine user input marks the resolution as chosen; programmatic
+  // restores (undo, reset, project import) dispatch untrusted events.
+  const markRefineLengthUserSet = (e) => { if (e.isTrusted) refineLengthUserSet = true; };
+  refineLenSlider.addEventListener('input', markRefineLengthUserSet);
+  refineLenSlider.addEventListener('dblclick', markRefineLengthUserSet);
+  refineLenVal.addEventListener('change', markRefineLengthUserSet);
+  refineLenVal.addEventListener('wheel', markRefineLengthUserSet);
   linkSlider(maxTriSlider, maxTriVal, v => { settings.maxTriangles = v; return formatM(v); }, false);
   linkSlider(bottomAngleLimitSlider, bottomAngleLimitVal, v => {
     settings.bottomAngleLimit = v; _falloffDirty = true;
@@ -1891,6 +1950,10 @@ function wireEvents() {
   linkSlider(textureSmoothingSlider, textureSmoothingVal, v => { settings.textureSmoothing = v; return v.toFixed(1); });
   invertTextureCheckbox.addEventListener('change', () => {
     settings.invertTexture = invertTextureCheckbox.checked;
+    updatePreview();
+  });
+  rotateAroundZCheckbox.addEventListener('change', () => {
+    settings.rotateAroundZ = rotateAroundZCheckbox.checked;
     updatePreview();
   });
   linkSlider(capAngleSlider,          capAngleVal,          v => { settings.capAngle         = v; return Math.round(v); });
@@ -2053,6 +2116,7 @@ function wireEvents() {
     if (sectionToggle.checked) {
       if (exclusionTool) setExclusionTool(null);
       if (placeOnFaceActive) togglePlaceOnFace(false);
+      if (stampPlaceActive || _stampWheelArmed) toggleStampPlace(false);
     }
     setSectionView(sectionToggle.checked);
     sectionControls.classList.toggle('hidden', !sectionToggle.checked);
@@ -2184,16 +2248,18 @@ function wireEvents() {
   // buttons do this — programmatic setSelectionMode() calls (project load,
   // session restore) must not activate a paint tool.
   exclModeExcludeBtn.addEventListener('click', () => {
+    const tool = exclusionTool; // changing the mode drops the active tool
     maskModeChosen = true;
     setSelectionMode(false);   // early-returns if already exclude…
     updateMaskModeButtons();   // …so refresh the highlight explicitly
-    if (!exclusionTool) setExclusionTool('bucket');
+    if (!exclusionTool) setExclusionTool(tool || 'bucket');
   });
   exclModeIncludeBtn.addEventListener('click', () => {
+    const tool = exclusionTool;
     maskModeChosen = true;
     setSelectionMode(true);
     updateMaskModeButtons();
-    if (!exclusionTool) setExclusionTool('bucket');
+    if (!exclusionTool) setExclusionTool(tool || 'bucket');
   });
 
   // ── Braille workspace ────────────────────────────────────────────────────
@@ -2364,10 +2430,37 @@ function wireEvents() {
 
   // ── Canvas mouse events for exclusion painting ────────────────────────────
   canvas.addEventListener('mousedown', (e) => {
+    // Any press that doesn't start a stamp gesture (orbit, pan, painting)
+    // hands the wheel back to zooming.
+    if (e.button !== 0 && _stampWheelArmed) _setStampWheelArmed(false);
     if (!currentGeometry || e.button !== 0) return;
 
     // Rotation gizmo takes priority
     if (isGizmoDragging()) return;
+
+    // Stamp placement: a hit centres the stamp and starts the drag; a miss
+    // falls through to OrbitControls.
+    if (stampPlaceActive) {
+      if (_placeStampAt(e, true)) {
+        e.preventDefault();
+        _startStampDrag();
+      } else {
+        _setStampWheelArmed(false);
+      }
+      return;
+    }
+
+    // Pressing on the stamp's patch grabs it — no tool needed.
+    if (!exclusionTool && !placeOnFaceActive && !rotateActive) {
+      const hit = _stampPatchHit(e);
+      if (hit) {
+        e.preventDefault();
+        _grabStamp(hit);
+        _startStampDrag();
+        return;
+      }
+    }
+    if (_stampWheelArmed) _setStampWheelArmed(false);
 
     // Place on Face mode
     if (placeOnFaceActive) {
@@ -2453,6 +2546,12 @@ function wireEvents() {
         const ev = _pendingHoverEvent;
         if (!ev) return;
         _pendingHoverEvent = null;
+        if (_stampDragging) {
+          // Slide along the surface; the axis stays the one picked on press.
+          if (_placeStampAt(ev, false)) { _syncPreviewMaterial(); requestRender(); }
+          return;
+        }
+        if (currentGeometry) _updateStampHoverCursor(ev);
         if (placeOnFaceActive && currentGeometry) { updatePlaceOnFaceHover(ev); return; }
         if (exclusionTool === 'brush') {
           updateBrushCursor(ev);
@@ -2471,7 +2570,22 @@ function wireEvents() {
     brushCursorEl.style.display = 'none';
   });
 
-  document.addEventListener('mouseup', () => {
+  document.addEventListener('mouseup', _endStampDrag);
+
+  // While armed, the wheel resizes the stamp. Captured on the canvas's parent
+  // so the viewer's cursor zoom (a wheel listener on the canvas) never sees it.
+  canvas.parentElement.addEventListener('wheel', (e) => {
+    if (!_stampWheelArmed || e.target !== canvas || !isStampActive(settings)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;   // lines → pixels (Firefox)
+    _scaleStampBy(Math.exp(-dy * 0.0015));
+  }, { capture: true, passive: false });
+
+  // A stroke belongs to the left button: tapping another one mustn't end it,
+  // or the camera would take over the rest of the drag.
+  document.addEventListener('mouseup', (e) => {
+    if (e.button !== 0) return;
     if (_brailleMoveDrag) {
       _brailleMoveDrag = null;
       getControls().enabled = true;
@@ -2494,10 +2608,17 @@ function wireEvents() {
     _commitUndoCapture();
   });
 
+  // OrbitControls only suppresses the context menu while enabled, and it's
+  // disabled during a stroke; a menu would swallow the left button's release.
+  document.addEventListener('contextmenu', (e) => {
+    if (isPainting) e.preventDefault();
+  });
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (rotateActive) toggleRotateMode(false);
       if (placeOnFaceActive) togglePlaceOnFace(false);
+      if (stampPlaceActive || _stampWheelArmed) toggleStampPlace(false);
       if (exclusionTool) setExclusionTool(null);
       licenseOverlay.classList.add('hidden');
       imprintOverlay.classList.add('hidden');
@@ -2553,6 +2674,7 @@ function setExclusionTool(tool) {
   // Deactivate place-on-face and rotate if an exclusion tool is being activated
   if (exclusionTool && placeOnFaceActive) togglePlaceOnFace(false);
   if (exclusionTool && rotateActive) toggleRotateMode(false);
+  if (exclusionTool && stampPlaceActive) toggleStampPlace(false);
 
   // Activating any masking tool engages the masking UI — highlight the mode
   // the paint will apply under (exclude unless include-only was chosen).
@@ -2775,6 +2897,7 @@ function _refreshPaintGeometry() {
       }
       geo.setAttribute('faceNormal', new THREE.Float32BufferAttribute(fn, 3));
     }
+    _owCarryPlaces(geo, flat.faceParentId);
     if (paintGeometry) paintGeometry.dispose();
     paintGeometry = geo;
     paintFlat = flat;
@@ -3115,6 +3238,13 @@ function _previewLayers() {
       cylinderCenterX: s.cylinderCenterX, cylinderCenterY: s.cylinderCenterY, cylinderRadius: s.cylinderRadius,
       textureAspectU: tmax / Math.max(tw, 1), textureAspectV: tmax / Math.max(th, 1),
       blendAdd: index > 0 && L.blendAdd,
+      stampOnce: s.stampOnce, stampSide: s.stampSide,
+      stampCenterX: s.stampCenterX, stampCenterY: s.stampCenterY, stampCenterZ: s.stampCenterZ,
+      stampNormalX: s.stampNormalX, stampNormalY: s.stampNormalY, stampNormalZ: s.stampNormalZ,
+      mapWidth: tw, mapHeight: th,
+      boundaryFalloff: s.boundaryFalloff, boundaryFalloffCurve: s.boundaryFalloffCurve,
+      stampDepth: _stampDepthFor(index, _stampFrameFor(index)),
+      outlineWrap: _owReadyOn(_displayGeometry()) ? _owWrap : null,
     });
   }
   return { list, activeIdx, count: slots.length };
@@ -3169,7 +3299,11 @@ function _pipelineInputs({ baseOnly = false } = {}) {
   const blockLayers = _blockPipelineLayers(positions, { baseOnly });
   const blockHard = blockLayers.map(l => l.hardFaces);
 
-  if (!split && parts.length === 1 && !blockLayers.length && parts[0].isActive) {
+  // A stamp always takes the layered path: the faces it can't reach join its
+  // hard mask there, so they are neither refined nor (with Preserve
+  // Untextured) touched by regularize and decimation.
+  if (!split && parts.length === 1 && !blockLayers.length && parts[0].isActive
+      && !isStampActive(parts[0].s)) {
     // Legacy inputs from the root paint: hard faces as the excluded set, soft
     // coverage on the welded base vertices.
     const tl = paintTree ? paintTree.layers[_activeSlot()] : null;
@@ -3196,7 +3330,18 @@ function _pipelineInputs({ baseOnly = false } = {}) {
   const hardFlags = [];
   const out = [];
   for (const { L, i, s, entry } of parts) {
-    const { cover, hardMasked } = _layerCoverOn(i, geometry);
+    const coverOn = _layerCoverOn(i, geometry);
+    const cover = coverOn.cover;
+    let hardMasked = coverOn.hardMasked;
+    const frame = _stampFrameFor(i);
+    if (frame) {
+      // Occlusion: only the surface nearest the stamp gets it.
+      frame.depth = buildStampDepth(positions, frame);
+      // A copy — _layerCoverOn's flags are cached.
+      const untouched = stampUntouchedFaces(positions, frame);
+      if (hardMasked) for (let t = 0; t < untouched.length; t++) untouched[t] |= hardMasked[t];
+      hardMasked = untouched;
+    }
     hardFlags.push(hardMasked);
     let exclude = null;
     if (cover) {
@@ -3205,9 +3350,10 @@ function _pipelineInputs({ baseOnly = false } = {}) {
     }
     out.push({
       imageData: entry.imageData, imgWidth: entry.width, imgHeight: entry.height,
-      settings: { ...settings, ...s },
+      settings: _owSettings({ ...settings, ...s }),
       exclude, hardFaces: hardMasked,
       blendAdd: L !== layers[0] && L.blendAdd,
+      stampDepth: frame ? frame.depth : null,
     });
   }
   out.push(...blockLayers);
@@ -4262,7 +4408,7 @@ async function handleExport3MFPart() {
         imgWidth: inputs.imgWidth,
         imgHeight: inputs.imgHeight,
         layers: inputs.layers,
-        settings: { ...settings, refineLength: _effectiveRefineLength() },
+        settings: _owSettings({ ...settings, refineLength: _effectiveRefineLength() }),
         bounds: currentBounds,
         regularizeOpts: _regularizeOpts(),
         mode: 'export',
@@ -4435,6 +4581,440 @@ function _clearShiftLinePreview() {
   }
 }
 
+// ── Stamp placement ──────────────────────────────────────────────────────────
+// A stamp layer (settings.stampOnce; surface normal, planar or cylindrical
+// mode) shows its image once. Pressing on its patch grabs it: drag to slide
+// it along the surface. "Position on model" (or turning the stamp on)
+// instead centres it on the next press anywhere on the model — Surface
+// normal then faces the surface there, planar modes take the axis and side
+// of the clicked face. After either press the mouse wheel resizes the
+// stamp, until the next press that isn't on the stamp (orbit, pan) hands the
+// wheel back to zooming.
+
+// Stamps work with these projections only (mapping.js isStampActive).
+const STAMP_MODES = new Set([7, 0, 1, 2, 3]);   // Surface normal, Planar XY / XZ / YZ, Cylindrical
+let _modeBeforeStamp = null;   // the tiling projection Stamp mode switched away from, restored when it ends
+
+// A Surface-normal stamp faces the dominant orientation of the surface
+// within this fraction of its shorter side — its inscribed circle — so small
+// features and facets under it don't tip it (mapping.js stampSurfaceAt).
+const STAMP_NORMAL_RADIUS = 0.5;
+
+/**
+ * Stamp mode on/off. Turning it on from a projection that can't stamp
+ * (Triplanar, Cubic, Spherical, Outline wrap) switches to Surface normal and goes
+ * straight to placing; turning it off brings that projection back (or
+ * Triplanar, since Surface normal only exists for stamps).
+ */
+function _setStampMode(on) {
+  if (on) {
+    if (!STAMP_MODES.has(settings.mappingMode)) {
+      _modeBeforeStamp = settings.mappingMode;
+      mappingSelect.value = '7';
+      mappingSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    settings.stampOnce = true;
+  } else {
+    settings.stampOnce = false;
+    updateStampUIVisibility();   // re-enables every projection before restoring one
+    if (_modeBeforeStamp == null && settings.mappingMode === 7) _modeBeforeStamp = 5;
+    if (_modeBeforeStamp != null) {
+      mappingSelect.value = String(_modeBeforeStamp);
+      _modeBeforeStamp = null;
+      mappingSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }
+  updateStampUIVisibility();
+  toggleStampPlace(isStampActive(settings) && !!currentGeometry);
+  // Back to tiling around a cylinder: re-snap to a seamless wrap.
+  if (settings.snapSeamlessWrap && _isSeamlessWrapMode()) _applyScaleU(settings.scaleU);
+  updatePreview();
+  _autoSaveSettings();   // a button click isn't an input/change event
+}
+
+/** Stamp UI follows the mode: button state, projections it can use, placement and no offsets or seam smoothing while on. */
+function updateStampUIVisibility() {
+  const on = isStampActive(settings);
+  stampModeBtn.classList.toggle('active', !!settings.stampOnce);
+  stampModeBtn.setAttribute('aria-pressed', String(!!settings.stampOnce));
+  for (const opt of mappingSelect.options) {
+    const v = parseInt(opt.value, 10);
+    opt.disabled = settings.stampOnce ? !STAMP_MODES.has(v) : v === 7;   // Surface normal: stamps only
+    if (v === 7) opt.hidden = !settings.stampOnce;
+  }
+  stampPlaceRow.style.display = on ? '' : 'none';
+  stampHint.style.display = on ? '' : 'none';
+  offsetUSlider.closest('.form-row').style.display = on ? 'none' : '';
+  offsetVSlider.closest('.form-row').style.display = on ? 'none' : '';
+  seamBandWidthSlider.closest('.form-row').style.display = on ? 'none' : '';   // no projection seams on a stamp
+  cylinderSnapRow.style.display = _isSeamlessWrapMode() ? '' : 'none';
+  if (!on) _setStampWheelArmed(false);
+}
+
+/** While armed the hint lights up, so it's clear why the wheel resizes instead of zooming. */
+function _setStampWheelArmed(armed) {
+  _stampWheelArmed = armed;
+  stampHint.classList.toggle('armed', armed);
+}
+
+/** Leaving placement (Escape, another tool, a new model) also gives the wheel back to zooming. */
+function toggleStampPlace(active) {
+  stampPlaceActive = active;
+  stampPlaceBtn.classList.toggle('active', active);
+  if (active) {
+    if (exclusionTool) setExclusionTool(null);
+    if (placeOnFaceActive) togglePlaceOnFace(false);
+    if (rotateActive) toggleRotateMode(false);
+    canvas.style.cursor = 'crosshair';
+  } else {
+    if (_stampDragging) {
+      _stampDragging = false; _stampGrab = null; _stampFastDepth = false;
+      getControls().enabled = true;
+      _syncPreviewMaterial();
+      _autoSaveSettings();
+    }
+    _setStampWheelArmed(false);
+    if (!exclusionTool && !placeOnFaceActive) canvas.style.cursor = '';
+  }
+  setSectionHandlesLocked(!!exclusionTool || placeOnFaceActive || active);
+}
+
+/**
+ * The model point under the cursor (model space), its base face's normal and
+ * that point dropped onto the base face's plane (the preview may be
+ * displaced), or null on a miss.
+ */
+function _stampRaycast(e) {
+  const mesh = getCurrentMesh();
+  if (!mesh) return null;
+  _raycaster.setFromCamera(_canvasNDC(e), getCamera());
+  const hit = getFrontFaceHit(_raycaster.intersectObject(mesh), mesh);
+  if (!hit) return null;
+  // The base face's normal, not the (possibly displaced) preview face's.
+  const base = _baseFaceOf(hit.faceIndex, mesh.geometry);
+  const fn = triangleFaceNormals;
+  const n = (fn && base >= 0 && base * 3 + 2 < fn.length)
+    ? new THREE.Vector3(fn[base * 3], fn[base * 3 + 1], fn[base * 3 + 2])
+    : hit.face.normal.clone();
+  const p = mesh.worldToLocal(hit.point.clone());
+  const pos = currentGeometry.attributes.position.array;
+  const onBase = p.clone();
+  if (base >= 0 && base * 9 + 8 < pos.length) {
+    const o = base * 9;
+    onBase.addScaledVector(n, -((p.x - pos[o]) * n.x + (p.y - pos[o + 1]) * n.y + (p.z - pos[o + 2]) * n.z));
+  }
+  return { p, n, onBase };
+}
+
+/** Layer i's stamp placement as the preview and export resolve it, or null when it isn't a stamp. */
+function _stampFrameFor(i) {
+  const L = layers[i];
+  if (!currentBounds || !L) return null;
+  const isActive = i === activeLayer;
+  const s = isActive ? settings : L.settings;
+  if (!isStampActive(s)) return null;
+  const entry = isActive ? getEffectiveMapEntry() : _effectiveMapFor(L.mapEntry, s.textureSmoothing, s.invertTexture);
+  const tw = entry?.width ?? 1, th = entry?.height ?? 1;
+  const tmax = Math.max(tw, th, 1);
+  return stampFrame({ ...s, textureAspectU: tmax / Math.max(tw, 1), textureAspectV: tmax / Math.max(th, 1) }, currentBounds);
+}
+
+/**
+ * The active layer's stamp placement with its depth map, so a hidden part
+ * of the footprint doesn't count as the patch — or null when it isn't a
+ * visible stamp.
+ */
+function _activeStampFrame() {
+  if (!layers[activeLayer]?.visible) return null;
+  const frame = _stampFrameFor(activeLayer);
+  if (frame) frame.depth = _stampDepthFor(activeLayer, frame)?.depth ?? null;
+  return frame;
+}
+
+// Preview depth maps per layer id: { key, depth, texture }. Rebuilt when the
+// placement or the base mesh changes — per frame while dragging or wheel-
+// resizing, so those use a coarser map (_stampFastDepth) and the full one is
+// rebuilt when the gesture ends.
+const _stampDepthCache = new Map();
+const STAMP_DEPTH_RES_FAST = 192;
+let _stampFastDepth = false;
+let _stampFastTimer = null;
+
+/** Layer i's stamp depth map on the base mesh, as data and as a float texture for the preview shader. */
+function _stampDepthFor(i, frame) {
+  if (!frame || !currentGeometry) return null;
+  const L = layers[i];
+  const pa = currentGeometry.attributes.position;
+  const res = _stampFastDepth ? STAMP_DEPTH_RES_FAST : STAMP_DEPTH_RES;
+  const key = [currentGeometry.uuid, pa.version, pa.count, res, frame.mode, frame.side, frame.cx, frame.cy, frame.cz,
+    frame.nx, frame.ny, frame.nz, frame.sizeU, frame.sizeV, frame.cosR, frame.sinR, frame.ccx, frame.ccy, frame.r].join(',');
+  const cached = _stampDepthCache.get(L.id);
+  if (cached && cached.key === key) return cached;
+  const depth = buildStampDepth(pa.array, frame, res);
+  const texture = new THREE.DataTexture(depth.data, depth.nu, depth.nv, THREE.RedFormat, THREE.FloatType);
+  texture.minFilter = texture.magFilter = THREE.NearestFilter;
+  texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  if (cached) cached.texture.dispose();
+  const entry = { key, depth, texture };
+  _stampDepthCache.set(L.id, entry);
+  return entry;
+}
+
+/** The raycast hit when the cursor is over the active stamp's patch, else null. */
+function _stampPatchHit(e) {
+  const frame = _activeStampFrame();
+  if (!frame) return null;
+  const hit = _stampRaycast(e);
+  if (!hit || stampUV(hit.p, hit.n, frame).cover <= 0) return null;
+  return { ...hit, frame };
+}
+
+/**
+ * Remember where on the patch it was grabbed, so dragging keeps that point
+ * under the cursor instead of snapping the centre to it. Cylindrical stamps
+ * keep the angle and height offset around the axis.
+ */
+function _grabStamp(hit) {
+  const f = hit.frame;
+  if (f.mode === 3 /* MODE_CYLINDRICAL */) {
+    _stampGrab = {
+      cyl: true, ccx: f.ccx, ccy: f.ccy,
+      rc: Math.hypot(f.cx - f.ccx, f.cy - f.ccy),
+      dth: Math.atan2(f.cy - f.ccy, f.cx - f.ccx) - Math.atan2(hit.p.y - f.ccy, hit.p.x - f.ccx),
+      dz: f.cz - hit.p.z,
+    };
+  } else if (f.mode === 7 /* MODE_SURFACE_NORMAL */) {
+    // The offset in the surface's own frame where it was grabbed, so it bends with the surface.
+    const s = _stampLastSurface = _stampSurfaceUnder(hit);
+    const ax = stampAxes(s.nx, s.ny, s.nz);
+    const dx = f.cx - s.x, dy = f.cy - s.y, dz = f.cz - s.z;
+    _stampGrab = {
+      normal: true,
+      du: dx * ax.ux + dy * ax.uy + dz * ax.uz,
+      dv: dx * ax.vx + dy * ax.vy + dz * ax.vz,
+      dn: dx * s.nx + dy * s.ny + dz * s.nz,
+    };
+  } else {
+    _stampGrab = { dx: f.cx - hit.p.x, dy: f.cy - hit.p.y, dz: f.cz - hit.p.z };
+  }
+}
+
+/** The active stamp's orientation-fit radius (mm): STAMP_NORMAL_RADIUS of its shorter side. */
+function _stampNormalRadius() {
+  const f = _stampFrameFor(activeLayer);
+  return STAMP_NORMAL_RADIUS * (f ? Math.min(f.sizeU, f.sizeV) : Math.min(settings.scaleU, settings.scaleV));
+}
+
+/** mapping.js stampSurfaceAt on the base mesh, over the active stamp's fit radius; `reach` (mm) bounds the snap. */
+function _stampSurfaceAt(q, hint, reach = _stampNormalRadius()) {
+  return stampSurfaceAt(currentGeometry.attributes.position.array, q, hint, _stampNormalRadius(), reach);
+}
+
+/** Surface normal: re-fit the orientation at the (unchanged) centre after a resize, since the fit spans the footprint. */
+function _reorientNormalStamp() {
+  if (!currentGeometry || !isStampActive(settings) || settings.mappingMode !== 7 /* MODE_SURFACE_NORMAL */) return;
+  if (settings.stampCenterX == null || settings.stampNormalX == null) return;
+  const s = _stampSurfaceAt({ x: settings.stampCenterX, y: settings.stampCenterY, z: settings.stampCenterZ },
+    { x: settings.stampNormalX, y: settings.stampNormalY, z: settings.stampNormalZ });
+  if (s) { settings.stampNormalX = s.nx; settings.stampNormalY = s.ny; settings.stampNormalZ = s.nz; }
+}
+
+/**
+ * Entering Surface normal with a stamp placed by another projection: keep
+ * its centre and face the surface there, starting from the side that
+ * projection stamped.
+ */
+function _faceStampSurface(prevMode) {
+  if (!currentGeometry || !currentBounds || !settings.stampOnce || settings.stampCenterX == null) return;
+  const f = stampFrame({ ...settings, mappingMode: prevMode }, currentBounds);
+  let hint;
+  if (prevMode === 0) hint = { x: 0, y: 0, z: f.side };
+  else if (prevMode === 1) hint = { x: 0, y: f.side, z: 0 };
+  else if (prevMode === 2) hint = { x: f.side, y: 0, z: 0 };
+  else if (prevMode === 3) hint = { x: (f.cx - f.ccx) * f.side, y: (f.cy - f.ccy) * f.side, z: 0 };
+  else return;
+  const s = _stampSurfaceAt({ x: f.cx, y: f.cy, z: f.cz }, hint);
+  if (s) { settings.stampNormalX = s.nx; settings.stampNormalY = s.ny; settings.stampNormalZ = s.nz; }
+}
+
+/** The surface point and fitted normal under a _stampRaycast hit (already on the surface: a short snap). */
+function _stampSurfaceUnder(hit) {
+  const q = hit.onBase;
+  return _stampSurfaceAt(q, hit.n, 0.1 * _stampNormalRadius() + 0.5)
+    ?? { x: q.x, y: q.y, z: q.z, nx: hit.n.x, ny: hit.n.y, nz: hit.n.z };
+}
+
+/** The cursor ray in model space: { o, d }. */
+function _stampCursorRay(e) {
+  const mesh = getCurrentMesh();
+  _raycaster.setFromCamera(_canvasNDC(e), getCamera());
+  const inv = mesh ? mesh.matrixWorld.clone().invert() : new THREE.Matrix4();
+  return { o: _raycaster.ray.origin.clone().applyMatrix4(inv), d: _raycaster.ray.direction.clone().transformDirection(inv) };
+}
+
+/**
+ * The surface point under the cursor for a Surface-normal stamp. While
+ * dragging it sticks to the surface it was on: when the cursor's hit turns
+ * away from it or jumps in depth (an edge — the deck past the gunwale, a wall
+ * behind it) or misses the model, the cursor ray is followed on that
+ * surface's tangent plane instead and dropped back onto the surface, so the
+ * stamp stops at the edge until the cursor is clearly past it (a quarter of
+ * the stamp's size) and only then moves over. Null when there is none.
+ */
+function _stampCursorSurface(hit, ray) {
+  let s = hit ? _stampSurfaceUnder(hit) : null;
+  const L = _stampDragging ? _stampLastSurface : null;
+  if (L) {
+    const R = _stampNormalRadius();
+    const left = !s || s.nx * L.nx + s.ny * L.ny + s.nz * L.nz < 0.5
+      || Math.abs((s.x - L.x) * L.nx + (s.y - L.y) * L.ny + (s.z - L.z) * L.nz) > 0.2 * R;
+    const den = ray.d.x * L.nx + ray.d.y * L.ny + ray.d.z * L.nz;
+    if (left && den < -1e-3) {
+      const t = ((L.x - ray.o.x) * L.nx + (L.y - ray.o.y) * L.ny + (L.z - ray.o.z) * L.nz) / den;
+      const q = { x: ray.o.x + t * ray.d.x, y: ray.o.y + t * ray.d.y, z: ray.o.z + t * ray.d.z };
+      const on = _stampSurfaceAt(q, { x: L.nx, y: L.ny, z: L.nz });
+      if (on && Math.hypot(on.x - q.x, on.y - q.y, on.z - q.z) < 0.5 * R) s = on;
+    }
+  }
+  if (s) _stampLastSurface = s;
+  return s;
+}
+
+/**
+ * Surface normal: centre on the surface under the cursor — or at the grab
+ * offset in the surface's frame there, dropped back onto the surface —
+ * facing its normal. Returns false when there is no surface to go to.
+ */
+function _moveNormalStamp(hit, ray) {
+  let s = _stampCursorSurface(hit, ray);
+  if (!s) return false;
+  const g = _stampGrab;
+  if (g && g.normal) {
+    const ax = stampAxes(s.nx, s.ny, s.nz);
+    const q = {
+      x: s.x + g.du * ax.ux + g.dv * ax.vx + g.dn * s.nx,
+      y: s.y + g.du * ax.uy + g.dv * ax.vy + g.dn * s.ny,
+      z: s.z + g.du * ax.uz + g.dv * ax.vz + g.dn * s.nz,
+    };
+    s = _stampSurfaceAt(q, { x: s.nx, y: s.ny, z: s.nz }, Math.max(_stampNormalRadius(), Math.hypot(g.du, g.dv)))
+      ?? { ...q, nx: s.nx, ny: s.ny, nz: s.nz };
+  }
+  settings.stampCenterX = s.x; settings.stampCenterY = s.y; settings.stampCenterZ = s.z;
+  settings.stampNormalX = s.nx; settings.stampNormalY = s.ny; settings.stampNormalZ = s.nz;
+  return true;
+}
+
+function _moveStampTo(hit) {
+  const g = _stampGrab;
+  const p = hit.p;
+  let x = p.x, y = p.y, z = p.z;
+  if (g && g.cyl) {
+    const th = Math.atan2(p.y - g.ccy, p.x - g.ccx) + g.dth;
+    x = g.ccx + g.rc * Math.cos(th);
+    y = g.ccy + g.rc * Math.sin(th);
+    z = p.z + g.dz;
+  } else if (g) {
+    x += g.dx; y += g.dy; z += g.dz;
+  }
+  settings.stampCenterX = x;
+  settings.stampCenterY = y;
+  settings.stampCenterZ = z;
+}
+
+function _startStampDrag() {
+  getControls().enabled = false;
+  _stampDragging = true;
+  _stampFastDepth = true;
+  _setStampWheelArmed(true);
+  _syncPreviewMaterial();
+  requestRender();
+}
+
+/** Resize the stamp by `factor`, keeping its proportions (wheel while armed). */
+function _scaleStampBy(factor) {
+  const clampMm = (v) => Math.max(SCALE_MM_INPUT_MIN, Math.min(SCALE_MM_INPUT_MAX, v));
+  const u = clampMm(settings.scaleU * factor);
+  const v = settings.lockScale ? u : clampMm(settings.scaleV * factor);
+  settings.scaleU = u; scaleUSlider.value = scaleToPos(u); scaleUVal.value = fmtScaleVal(u);
+  settings.scaleV = v; scaleVSlider.value = scaleToPos(v); scaleVVal.value = fmtScaleVal(v);
+  _reorientNormalStamp();
+  // Coarse occlusion while the wheel turns; full resolution once it stops.
+  _stampFastDepth = true;
+  clearTimeout(_stampFastTimer);
+  _stampFastTimer = setTimeout(() => {
+    _stampFastDepth = _stampDragging;
+    _syncPreviewMaterial();
+    requestRender();
+  }, 200);
+  _syncPreviewMaterial();
+  requestRender();
+  clearTimeout(previewDebounce); previewDebounce = setTimeout(updatePreview, 80);
+  _autoSaveSettings();
+  _scheduleUndoCapture();
+}
+
+/** 'move' cursor over the stamp's patch while no tool owns the cursor. */
+function _updateStampHoverCursor(e) {
+  const free = !placeOnFaceActive && !exclusionTool && !stampPlaceActive && !rotateActive && e.buttons === 0;
+  const over = free && !!_stampPatchHit(e);
+  if (over === _stampHoverCursor) return;
+  _stampHoverCursor = over;
+  if (over) canvas.style.cursor = 'move';
+  else if (free) canvas.style.cursor = '';
+}
+
+/**
+ * Centre the stamp on the model point under the cursor. With pickAxis, the
+ * clicked face also chooses the projection: for planar modes the axis its
+ * normal is closest to (switching between XY / XZ / YZ) and the side it
+ * faces; for cylindrical, outside or inside. (Surface normal always faces
+ * the surface under the centre.) Returns false on a miss.
+ */
+function _placeStampAt(e, pickAxis) {
+  const hit = _stampRaycast(e);
+  // Surface normal: a drag can carry on past an edge (the stamp stays on its surface).
+  if (settings.mappingMode === 7 /* MODE_SURFACE_NORMAL */) return _moveNormalStamp(hit, _stampCursorRay(e));
+  if (!hit) return false;
+  const { p, n } = hit;
+  if (pickAxis) {
+    if (settings.mappingMode === 3 /* MODE_CYLINDRICAL */) {
+      const { cx, cy } = getEffectiveCylinderCenter();
+      const rx = p.x - cx, ry = p.y - cy;
+      const len = Math.hypot(rx, ry);
+      const radial = len > 1e-6 ? (n.x * rx + n.y * ry) / len : 0;
+      // A cap face (no radial component) keeps the current side.
+      if (Math.abs(radial) > 0.2) settings.stampSide = radial > 0 ? 1 : -1;
+    } else {
+      const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+      const mode = (az >= ax && az >= ay) ? 0 : (ay >= ax ? 1 : 2);
+      const along = mode === 0 ? n.z : mode === 1 ? n.y : n.x;
+      settings.stampSide = along >= 0 ? 1 : -1;
+      if (mode !== settings.mappingMode) {
+        mappingSelect.value = String(mode);
+        mappingSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  }
+  _moveStampTo(hit);
+  return true;
+}
+
+/** Release: placement mode (if any) ends, but the wheel stays on the stamp until the next press. */
+function _endStampDrag() {
+  if (!_stampDragging) return;
+  _stampDragging = false;
+  _stampGrab = null;
+  _stampLastSurface = null;
+  _stampFastDepth = false;   // full-resolution occlusion again
+  getControls().enabled = true;
+  if (stampPlaceActive) toggleStampPlace(false);
+  _setStampWheelArmed(true);
+  updatePreview();
+  _autoSaveSettings();
+}
+
 // ── Place on Face ─────────────────────────────────────────────────────────────
 
 function togglePlaceOnFace(active) {
@@ -4447,6 +5027,7 @@ function togglePlaceOnFace(active) {
     if (exclusionTool) setExclusionTool(null);
     // Deactivate rotate mode
     if (rotateActive) toggleRotateMode(false);
+    if (stampPlaceActive || _stampWheelArmed) toggleStampPlace(false);
     canvas.style.cursor = 'crosshair';
   } else {
     if (!exclusionTool) canvas.style.cursor = '';
@@ -4523,6 +5104,8 @@ function handlePlaceOnFaceClick(e) {
   settings.cylinderCenterX = null;
   settings.cylinderCenterY = null;
   settings.cylinderRadius  = null;
+  settings.stampCenterX = settings.stampCenterY = settings.stampCenterZ = null;  // same for the stamp centre
+  settings.stampNormalX = settings.stampNormalY = settings.stampNormalZ = null;
   _cylSilhouetteCanvas = null;
   _cylSilhouetteGeometry = null;
   _cylSilhouetteAnchor = null;
@@ -4567,12 +5150,7 @@ function handlePlaceOnFaceClick(e) {
   _rebuildPaintTreeKeepingPaint(adjData);
 
   // Update edge length for new bounds
-  const diag = Math.sqrt(currentBounds.size.x ** 2 + currentBounds.size.y ** 2 + currentBounds.size.z ** 2);
-  const defaultEdge = Math.max(0.05, Math.min(5.0, +(diag / 300).toFixed(2)));
-  settings.refineLength = defaultEdge;
-  refineLenSlider.value = defaultEdge;
-  refineLenVal.value = defaultEdge;
-  checkResolutionWarning();
+  _applyDefaultRefineLength(currentBounds, 300);
 
   // Update mesh info
   const triCount = getTriangleCount(currentGeometry);
@@ -4606,6 +5184,7 @@ function toggleRotateMode(active) {
     // Deactivate conflicting modes
     if (placeOnFaceActive) togglePlaceOnFace(false);
     if (exclusionTool) setExclusionTool(null);
+    if (stampPlaceActive || _stampWheelArmed) toggleStampPlace(false);
 
     // Snapshot original positions (and the matching pose transform) for reset
     if (currentGeometry) {
@@ -5018,6 +5597,7 @@ function loadDefaultCube() {
   updateMaskModeButtons();
   if (placeOnFaceActive) togglePlaceOnFace(false);
   if (rotateActive) toggleRotateMode(false);
+  if (stampPlaceActive || _stampWheelArmed) toggleStampPlace(false);
   rotateAngles = { x: 0, y: 0, z: 0 };
   rotateXInput.value = '0'; rotateYInput.value = '0'; rotateZInput.value = '0';
   exclBrushBtn.classList.remove('active');
@@ -5202,6 +5782,8 @@ async function handleModelFile(file, stepSettings = null) {
     settings.cylinderCenterX = null;
     settings.cylinderCenterY = null;
     settings.cylinderRadius  = null;
+    settings.stampCenterX = settings.stampCenterY = settings.stampCenterZ = null;  // same for the stamp centre
+    settings.stampNormalX = settings.stampNormalY = settings.stampNormalZ = null;
     _cylSilhouetteCanvas = null;
     _cylSilhouetteGeometry = null;
     _cylSilhouetteAnchor = null;
@@ -5237,6 +5819,7 @@ async function handleModelFile(file, stepSettings = null) {
     updateMaskModeButtons();
     if (placeOnFaceActive) togglePlaceOnFace(false);
     if (rotateActive) toggleRotateMode(false);
+    if (stampPlaceActive || _stampWheelArmed) toggleStampPlace(false);
     rotateAngles = { x: 0, y: 0, z: 0 };
     rotateXInput.value = '0'; rotateYInput.value = '0'; rotateZInput.value = '0';
     exclBrushBtn.classList.remove('active');
@@ -5264,18 +5847,13 @@ async function handleModelFile(file, stepSettings = null) {
 
     // Carry scale, offset, rotation, and all other tuning across model swaps —
     // they're normalized to the bounding box so they apply meaningfully to the
-    // new mesh. Output resolution is the one exception: it's recomputed below
-    // from the new model's diagonal so a default-sized edge length still makes
-    // sense whether the user just loaded a thumb-sized part or a 1m piece.
+    // new mesh. Output resolution is recomputed from the new model's diagonal
+    // (so a default edge length suits a thumb-sized part and a 1m piece alike)
+    // unless the user has set it themselves — then their value is kept.
     triLimitWarning.classList.add('hidden');
 
     // Default edge length = 1/250 of the bounding box diagonal
-    const diag = Math.sqrt(bounds.size.x ** 2 + bounds.size.y ** 2 + bounds.size.z ** 2);
-    const defaultEdge = Math.max(0.05, Math.min(5.0, +(diag / 250).toFixed(2)));
-    settings.refineLength = defaultEdge;
-    refineLenSlider.value = defaultEdge;
-    refineLenVal.value = defaultEdge;
-    checkResolutionWarning();
+    _applyDefaultRefineLength(bounds, 250);
 
     const triCount = getTriangleCount(currentGeometry);
     const mb = ((currentGeometry.attributes.position.array.byteLength) / 1024 / 1024).toFixed(2);
@@ -5480,6 +6058,22 @@ function updateMeshDiagnostics(adjData, triCount) {
   meshDiagRunBtn.disabled = false;
 }
 
+/**
+ * Seed the output resolution from the model size (1/divisor of the bounding-box
+ * diagonal, clamped to [0.05, 5.0] mm) — unless the user already picked one,
+ * which then carries over to the next model like every other setting.
+ */
+function _applyDefaultRefineLength(bounds, divisor) {
+  if (!refineLengthUserSet) {
+    const diag = Math.sqrt(bounds.size.x ** 2 + bounds.size.y ** 2 + bounds.size.z ** 2);
+    const defaultEdge = Math.max(0.05, Math.min(5.0, +(diag / divisor).toFixed(2)));
+    settings.refineLength = defaultEdge;
+    refineLenSlider.value = defaultEdge;
+    refineLenVal.value = defaultEdge;
+  }
+  checkResolutionWarning();
+}
+
 function checkResolutionWarning() {
   if (!currentBounds) return;
   const diag = Math.sqrt(
@@ -5518,6 +6112,7 @@ function applySmartResolution() {
   // chosen edge assumes decimation will land near `recommendedMaxTri`.
   // Setting them in lockstep means clicking Smart twice is idempotent.
   const d = result.diagnostics;
+  refineLengthUserSet = true;
   settings.refineLength = result.edge;
   refineLenSlider.value = result.edge;
   refineLenVal.value    = result.edge;
@@ -6100,6 +6695,9 @@ function _materialSettings(preview) {
     // Braille block placements (preview shader).
     blocks: blocks.list,
     blockAtlas: blocks.atlasTex,
+    // Outline wrap: the shader maps it as cylindrical until the mesh on screen has its places.
+    outlineWrapReady: _owReadyOn(_displayGeometry()),
+    outlineWrapMean:  _owWrap ? _owWrap.meanLength : 1,
   };
 }
 
@@ -6136,6 +6734,7 @@ function updatePreview() {
 
   // Ensure the per-layer mask attributes are current before rendering
   updateFaceMask(activeGeo);
+  _syncOutlineWrap(activeGeo);
 
   const preview = _previewLayers();
   if (!previewMaterial) {
@@ -6258,6 +6857,8 @@ async function toggleDisplacementPreview(enable) {
     }
     setMeshGeometry(dispPreviewGeometry);
     setMeshMaterial(previewMaterial);
+    // Its places (outline wrap) come from the worker; the redraw follows them.
+    _syncOutlineWrap(dispPreviewGeometry);
   } catch (err) {
     if (dispPreviewToken !== myToken) return;
     console.error('Displacement preview failed:', err);
@@ -6423,6 +7024,8 @@ async function handleExport(format = 'stl') {
     // displacement will be applied. Soft-brush paint rides along separately.
     // With several visible layers the pipeline composites them per vertex
     // (exportPipeline.js `layers`).
+    await _owTablesForExport();
+    if (exportToken !== myToken) return;
     const inputs = _pipelineInputs();
 
     // Run the heavy pipeline (subdivide → regularize → displace → decimate →
@@ -6438,7 +7041,7 @@ async function handleExport(format = 'stl') {
       imgWidth: inputs.imgWidth,
       imgHeight: inputs.imgHeight,
       layers: inputs.layers,
-      settings: { ...settings, refineLength: _effectiveRefineLength() },
+      settings: _owSettings({ ...settings, refineLength: _effectiveRefineLength() }),
       bounds: currentBounds,
       regularizeOpts: _regularizeOpts(),
       mode: 'export',
@@ -6700,6 +7303,195 @@ async function runPipeline(input, onEvent, isStale) {
   });
 }
 
+// ── Outline wrap (projection mode 8) ───────────────────────────────────────
+// The tables of the base mesh (outlineWrap.js), built in outlineWrapWorker.js
+// once a layer on screen uses the outline wrap, and the per-vertex places of
+// the mesh on screen (the preview's `outlineWrap` attribute). Keyed on the base
+// geometry's uuid and position version, so Rotate and Place on Face (which
+// move the vertices in place) and a new model rebuild them. When the outline
+// wrap cannot follow the mesh, it maps as cylindrical (mapping.js) and a note
+// under the Projection select says so.
+let _owWorker = null;
+let _owWorkerFailed = false;
+let _owWorkerInit = null;
+let _owSeq = 0;
+const _owWaiting = new Map();   // request id → { resolve, reject }
+let _owKey = null;              // the base mesh the tables (or the error) belong to
+let _owWrap = null;             // its tables, or null
+let _owError = null;            // why the outline wrap cannot follow it, or null
+let _owBuild = null;            // the build in flight for _owKey
+
+const _owKeyOf = (geo) => geo ? `${geo.uuid}:${geo.attributes.position.version}` : null;
+
+/** Whether a layer on screen uses the outline wrap. */
+function _owUsed() {
+  return _layerSlots().some(({ index, isActive }) =>
+    (isActive ? settings : layers[index].settings).mappingMode === MODE_OUTLINE_WRAP);
+}
+
+/** Whether `geo` holds the places of the current tables (the shader may use the outline wrap on it). */
+function _owReadyOn(geo) {
+  return !!(_owWrap && geo && _owKey === _owKeyOf(currentGeometry) && geo.userData.outlineWrapKey === _owKey);
+}
+
+/** `s` with the tables of the current mesh, for computeUV; as it is without them (it then maps as cylindrical). */
+function _owSettings(s) {
+  return _owWrap && _owKey === _owKeyOf(currentGeometry) ? { ...s, outlineWrap: _owWrap } : s;
+}
+
+function ensureOutlineWrapWorker() {
+  if (_owWorkerFailed) return Promise.resolve(null);
+  if (_owWorker) return Promise.resolve(_owWorker);
+  if (!_owWorkerInit) {
+    _owWorkerInit = _initWorker(new URL('./outlineWrapWorker.js', import.meta.url)).then(
+      (w) => {
+        w.onmessage = (e) => {
+          const m = e.data;
+          const asked = m && _owWaiting.get(m.id);
+          if (!asked) return;
+          _owWaiting.delete(m.id);
+          if (m.type === 'done') asked.resolve(m);
+          else asked.reject(new Error(m.message));
+        };
+        w.onerror = (e) => {
+          for (const asked of _owWaiting.values()) asked.reject(new Error((e && e.message) || 'outline wrap worker crashed'));
+          _owWaiting.clear();
+          try { w.terminate(); } catch {}
+          if (_owWorker === w) _owWorker = null;
+        };
+        _owWorker = w;
+        _owWorkerInit = null;
+        return w;
+      },
+      (err) => {
+        _owWorkerFailed = true;
+        _owWorkerInit = null;
+        console.warn('[stlTexturizer] outline wrap worker unavailable — building it on the main thread:', err.message);
+        return null;
+      }
+    );
+  }
+  return _owWorkerInit;
+}
+
+/**
+ * Run a build (tables and places of `positions`) or a places request (on the
+ * tables `wrap`) in the worker, or inline when the worker is unavailable.
+ */
+async function _owRun(cmd, positions, wrap = null) {
+  const w = await ensureOutlineWrapWorker();
+  if (!w) {
+    const tables = cmd === 'build' ? buildOutlineWrap(positions) : wrap;
+    return { wrap: tables, places: outlineWrapPlaces(tables, positions) };
+  }
+  const id = ++_owSeq;
+  return new Promise((resolve, reject) => {
+    _owWaiting.set(id, { resolve, reject });
+    w.postMessage({ cmd, id, positions, wrap }, [positions.buffer]);
+  });
+}
+
+/** The tables of the base mesh: built once per mesh; null when the outline wrap cannot follow it. */
+function _owTables() {
+  const geo = currentGeometry;
+  const key = _owKeyOf(geo);
+  if (!key) return Promise.resolve(null);
+  if (_owKey === key && _owBuild) return _owBuild;
+  if (_owKey === key && (_owWrap || _owError)) return Promise.resolve(_owWrap);
+  _owKey = key;
+  _owWrap = null;
+  _owError = null;
+  _owBuild = _owRun('build', geo.attributes.position.array.slice()).then(
+    (r) => {
+      if (_owKey !== key) return null;
+      _owWrap = r.wrap;
+      _owBuild = null;
+      if (_owKeyOf(geo) === key) _owSetPlaces(geo, r.places, key);
+      return _owWrap;
+    },
+    (err) => {
+      if (_owKey !== key) return null;
+      _owError = err.message;
+      _owBuild = null;
+      console.warn('[stlTexturizer] outline wrap maps as cylindrical:', err.message);
+      return null;
+    }
+  );
+  return _owBuild;
+}
+
+function _owSetPlaces(geo, places, key) {
+  geo.setAttribute('outlineWrap', new THREE.Float32BufferAttribute(places, 2));
+  geo.userData.outlineWrapKey = key;
+}
+
+/**
+ * A paint split's mesh (each leaf in its base face's plane, `faceParentId`)
+ * takes the places of its base faces' corners at each leaf corner's
+ * barycentric weights: what the GPU interpolated across the base face, so the
+ * preview does not change, and with no request to the worker.
+ */
+function _owCarryPlaces(geo, faceParentId) {
+  const base = currentGeometry;
+  const from = base && base.getAttribute('outlineWrap');
+  if (!from || !_owWrap || base.userData.outlineWrapKey !== _owKeyOf(base)) return;
+  const bp = base.attributes.position.array;
+  const lp = geo.attributes.position.array;
+  const out = new Float32Array((lp.length / 3) * 2);
+  for (let c = 0; c < lp.length / 3; c++) {
+    const f = faceParentId[Math.floor(c / 3)];
+    const a = 9 * f;
+    // Barycentric weights of the leaf corner in the base face (a, b, c).
+    const e0x = bp[a + 3] - bp[a], e0y = bp[a + 4] - bp[a + 1], e0z = bp[a + 5] - bp[a + 2];
+    const e1x = bp[a + 6] - bp[a], e1y = bp[a + 7] - bp[a + 1], e1z = bp[a + 8] - bp[a + 2];
+    const px = lp[3 * c] - bp[a], py = lp[3 * c + 1] - bp[a + 1], pz = lp[3 * c + 2] - bp[a + 2];
+    const d00 = e0x * e0x + e0y * e0y + e0z * e0z, d01 = e0x * e1x + e0y * e1y + e0z * e1z, d11 = e1x * e1x + e1y * e1y + e1z * e1z;
+    const d20 = px * e0x + py * e0y + pz * e0z, d21 = px * e1x + py * e1y + pz * e1z;
+    const den = d00 * d11 - d01 * d01;
+    const v = den > 0 ? (d11 * d20 - d01 * d21) / den : 0;
+    const w = den > 0 ? (d00 * d21 - d01 * d20) / den : 0;
+    const u = 1 - v - w;
+    for (let k = 0; k < 2; k++) {
+      out[2 * c + k] = u * from.array[6 * f + k] + v * from.array[6 * f + 2 + k] + w * from.array[6 * f + 4 + k];
+    }
+  }
+  _owSetPlaces(geo, out, base.userData.outlineWrapKey);
+}
+
+/** Before an export or a bake: wait for the tables when a layer uses the outline wrap. */
+async function _owTablesForExport() {
+  if (_owUsed()) await _owTables();
+}
+
+/**
+ * From updatePreview, with the mesh on screen: start the tables' build, put
+ * the places on the mesh on screen once they exist, show the fallback note,
+ * and redraw when each step lands.
+ */
+function _syncOutlineWrap(activeGeo) {
+  const used = _owUsed();
+  const key = _owKeyOf(currentGeometry);
+  // The note sits under the active layer's Projection select.
+  outlineWrapNote.classList.toggle('hidden', !(settings.mappingMode === MODE_OUTLINE_WRAP && _owError && _owKey === key));
+  if (!used || !key) return;
+  if (_owKey !== key || (!_owWrap && !_owError && !_owBuild)) {
+    _owTables().then(() => { if (_owKeyOf(currentGeometry) === key) updatePreview(); });
+    return;
+  }
+  if (!_owWrap || activeGeo.userData.outlineWrapKey === key || activeGeo.userData.outlineWrapPending === key) return;
+  activeGeo.userData.outlineWrapPending = key;
+  _owRun('places', activeGeo.attributes.position.array.slice(), _owWrap).then(
+    (r) => {
+      if (_owKey !== key) return;
+      _owSetPlaces(activeGeo, r.places, key);
+      updatePreview();
+    },
+    (err) => console.warn('[stlTexturizer] outline wrap places failed:', err.message)
+  ).finally(() => {
+    if (activeGeo.userData.outlineWrapPending === key) delete activeGeo.userData.outlineWrapPending;
+  });
+}
+
 // ── 3D-preview worker ──────────────────────────────────────────────────────
 // Its own worker (previewWorker.js) so a preview build never queues behind or
 // gets killed with an export. Started lazily on the first preview build.
@@ -6792,6 +7584,7 @@ async function bakeTextures() {
     // Mirror handleExport's pre-flight: combine user mask + angle masking
     // into per-vertex weights for subdivision, plus soft-brush paint (or the
     // per-layer masks when several layers are visible).
+    await _owTablesForExport();
     const inputs = _pipelineInputs();
     const faceWeights = inputs.faceWeights;
 
@@ -6807,7 +7600,7 @@ async function bakeTextures() {
       imgWidth: inputs.imgWidth,
       imgHeight: inputs.imgHeight,
       layers: inputs.layers,
-      settings: { ...settings, refineLength: _effectiveRefineLength() },
+      settings: _owSettings({ ...settings, refineLength: _effectiveRefineLength() }),
       bounds: currentBounds,
       regularizeOpts: _regularizeOpts(),
       mode: 'bake',
@@ -6940,6 +7733,7 @@ function adoptBakedGeometry(geometry, bounds, opts = {}) {
   isPainting    = false;
   if (placeOnFaceActive) togglePlaceOnFace(false);
   if (rotateActive) toggleRotateMode(false);
+  if (stampPlaceActive || _stampWheelArmed) toggleStampPlace(false);
   rotateAngles = { x: 0, y: 0, z: 0 };
   rotateXInput.value = '0'; rotateYInput.value = '0'; rotateZInput.value = '0';
   exclBrushBtn.classList.remove('active');
@@ -7014,7 +7808,7 @@ try { localStorage.removeItem(PROJECT_STORAGE_KEY); } catch { /* ignore */ }
 // Persisted setting keys — excludes `useDisplacement` (transient UI state).
 const PERSISTED_KEYS = [
   'mappingMode', 'scaleU', 'scaleV', 'lockScale',
-  'offsetU', 'offsetV', 'rotation',
+  'offsetU', 'offsetV', 'rotation', 'rotateAroundZ',
   'amplitude', 'textureHeight', 'invertDisplacement',
   'invertTexture',
   'symmetricDisplacement', 'noDownwardZ', 'smoothBottom', 'harvestFlatFaces', 'harvestTol', 'preserveUntextured', 'textureSmoothing',
@@ -7025,6 +7819,9 @@ const PERSISTED_KEYS = [
   // null means "fall back to AABB defaults", which is what fresh loads get.
   'snapSeamlessWrap', 'cylinderCenterX', 'cylinderCenterY', 'cylinderRadius',
   'cylinderPanelMinimized',
+  // Stamp placement; the centre, side and normal are nullable like the cylinder axis.
+  'stampOnce', 'stampCenterX', 'stampCenterY', 'stampCenterZ', 'stampSide',
+  'stampNormalX', 'stampNormalY', 'stampNormalZ',
 ];
 
 // Settings that are NOT per layer (see LAYER_KEYS): resolution, triangle
@@ -7085,6 +7882,13 @@ function _layerSettingsFrom(saved) {
   const out = _layerSettingsSnapshot();
   if (saved && typeof saved === 'object') {
     for (const k of LAYER_KEYS) if (k in saved) out[k] = saved[k];
+    // Layers saved before stamps existed tile — never inherit the live layer's stamp.
+    if (!('stampOnce' in saved)) {
+      out.stampOnce = false;
+      out.stampCenterX = out.stampCenterY = out.stampCenterZ = out.stampSide = null;
+      out.stampNormalX = out.stampNormalY = out.stampNormalZ = null;
+    }
+    if (out.mappingMode === 7 /* MODE_SURFACE_NORMAL */ && !out.stampOnce) out.mappingMode = 5;   // stamps only
     if (saved.scaleUnit !== 'mm') {
       // Legacy relative scale fractions — convert like applySettingsSnapshot would.
       const m = _migrateSnapshotScaleToMm({ ...out, scaleUnit: saved.scaleUnit });
@@ -7201,8 +8005,11 @@ function applySettingsSnapshot(snap) {
   snap = _migrateSnapshotScaleToMm(snap);
 
   // Mapping mode first — changes cap-angle row visibility and triggers preview.
+  // Stamp mode's option limits are re-applied at the end, for this snapshot.
+  for (const opt of mappingSelect.options) opt.disabled = false;
   if (snap.mappingMode != null) {
-    mappingSelect.value = String(snap.mappingMode);
+    // Surface normal only exists for stamps.
+    mappingSelect.value = String(snap.mappingMode === 7 && !snap.stampOnce ? 5 : snap.mappingMode);
     mappingSelect.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
@@ -7233,6 +8040,9 @@ function applySettingsSnapshot(snap) {
   setLinkedVal(offsetUVal,          snap.offsetU);
   setLinkedVal(offsetVVal,          snap.offsetV);
   setLinkedVal(rotationVal,         snap.rotation);
+  // Older projects predate the option and rotated side faces in-plane.
+  rotateAroundZCheckbox.checked = snap.rotateAroundZ ?? false;
+  rotateAroundZCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
   setLinkedVal(amplitudeVal,        snap.textureHeight);
   setLinkedVal(textureSmoothingVal, snap.textureSmoothing);
   setLinkedVal(seamBlendVal,        snap.mappingBlend);
@@ -7303,6 +8113,20 @@ function applySettingsSnapshot(snap) {
     cylinderPanel.classList.toggle('minimized', settings.cylinderPanelMinimized);
   }
   updateCylinderUIVisibility();
+
+  // Stamp: snapshots from before the feature tile, like they always did.
+  settings.stampOnce    = !!snap.stampOnce;
+  settings.stampCenterX = snap.stampCenterX ?? null;
+  settings.stampCenterY = snap.stampCenterY ?? null;
+  settings.stampCenterZ = snap.stampCenterZ ?? null;
+  settings.stampSide    = snap.stampSide ?? null;
+  settings.stampNormalX = snap.stampNormalX ?? null;
+  settings.stampNormalY = snap.stampNormalY ?? null;
+  settings.stampNormalZ = snap.stampNormalZ ?? null;
+  _modeBeforeStamp = null;   // that projection belonged to the previous layer / session
+  if (stampPlaceActive && !isStampActive(settings)) toggleStampPlace(false);
+  _setStampWheelArmed(false);   // e.g. another layer: the wheel zooms again
+  updateStampUIVisibility();
 
   // Braille pool + placements (session restore / project import).
   if (snap.braille) _restoreBrailleSnapshot(snap.braille);
@@ -7383,7 +8207,7 @@ for (const btn of Object.values(falloffCurveButtons)) {
 // edge" mm for whatever model is currently loaded (the per-model default).
 const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   mappingMode: 5, scaleU: 0.5, scaleV: 0.5, lockScale: true,
-  offsetU: 0, offsetV: 0, rotation: 0,
+  offsetU: 0, offsetV: 0, rotation: 0, rotateAroundZ: false,
   amplitude: 0.5, textureHeight: 0.5, invertDisplacement: false,
   invertTexture: false,
   symmetricDisplacement: false, noDownwardZ: false, smoothBottom: true, harvestFlatFaces: true, harvestTol: 0.005, preserveUntextured: true, textureSmoothing: 0,
@@ -7394,6 +8218,8 @@ const DEFAULT_SETTINGS_SNAPSHOT = Object.freeze({
   snapSeamlessWrap: true,
   cylinderCenterX: null, cylinderCenterY: null, cylinderRadius: null,
   cylinderPanelMinimized: false,
+  stampOnce: false, stampCenterX: null, stampCenterY: null, stampCenterZ: null, stampSide: null,
+  stampNormalX: null, stampNormalY: null, stampNormalZ: null,
   activeMapName: null,
 });
 
@@ -7421,6 +8247,8 @@ function resetSettingsToDefaults() {
       snapshot.refineLength = Math.max(0.05, Math.min(5.0, +(diag / 250).toFixed(2)));
     }
     applySettingsSnapshot(snapshot);
+    // A reset hands the resolution back to the per-model default.
+    refineLengthUserSet = false;
 
     // Back to a single layer with no paint, in Exclude mode.
     layers = [_newLayer({ includeOnly: false, maskModeChosen: false })];
