@@ -741,8 +741,12 @@ const fragmentShader = /* glsl */`
     // that specular highlights, diffuse response, and view-dependent shading
     // are perfectly consistent everywhere.  Mask tinting is applied AFTER
     // lighting as a colour blend so masked areas keep the same glossy look.
-    vec3 tealBase      = layerCount == 0 ? vec3(0.667, 0.667, 0.8)   // Braille-only: match the default model colour (0xaaaacc)
-                                         : vec3(0.22, 0.68, 0.68);
+    // Braille-only look: no layers at all, or just the ever-present default
+    // layer carrying no texture (amplitude 0) — match the plain model colour
+    // (0xaaaacc) instead of the texture workspace's teal.
+    bool brailleOnly = layerCount == 0 || (layerCount == 1 && layerAmp[0] <= 0.0);
+    vec3 tealBase      = brailleOnly ? vec3(0.667, 0.667, 0.8)
+                                     : vec3(0.22, 0.68, 0.68);
     // Single layer: the familiar orange (painted out) and dark grey (angle
     // mask). Several layers: everything the active layer does not cover is a
     // plain neutral grey, so "teal = active layer" reads at a glance and the
@@ -771,7 +775,7 @@ const fragmentShader = /* glsl */`
     // compute the same lighting with that base.
     float userMask   = activeLayer == 0 ? vLayerMask.x : activeLayer == 1 ? vLayerMask.y : activeLayer == 2 ? vLayerMask.z : vLayerMask.w;
     float activeMask = activeLayer == 0 ? w.x : activeLayer == 1 ? w.y : activeLayer == 2 ? w.z : w.w;
-    float maskEffect = layerCount == 0 ? 0.0 : 1.0 - activeMask; // 0 = fully textured, 1 = fully masked; no layers → no tint (Braille-only mode)
+    float maskEffect = brailleOnly ? 0.0 : 1.0 - activeMask; // 0 = fully textured, 1 = fully masked; Braille-only → no tint
     // Any user-mask coverage (hard 0 or soft-brush fractions) tints in the
     // user colour; only fully unmasked pixels defer to the boundary type.
     float effectiveMaskType = mix(vMaskType, 0.0, step(0.001, 1.0 - userMask));

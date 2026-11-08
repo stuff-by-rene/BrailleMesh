@@ -987,6 +987,15 @@ export function isSoftwareRendering() {
 
 export function requestRender() { _needsRender = true; }
 
+/** Synchronous one-off render. Native HTML5 drag sessions pause
+ *  requestAnimationFrame in Chrome/Firefox, so the on-demand loop above never
+ *  gets a frame while the user drags — the drag ghost must draw directly. */
+export function renderNow() {
+  if (!renderer || !camera) return;
+  _needsRender = false;
+  renderer.render(scene, camera);
+}
+
 export function getRenderer()  { return renderer; }
 export function getCamera()    { return camera; }
 export function getScene()     { return scene; }

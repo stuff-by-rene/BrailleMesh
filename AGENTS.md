@@ -11,8 +11,13 @@ eine Höhenkarte wird aufs Netz projiziert und als echtes Relief ausgetragen.
 Der **Braille-Modus** ergänzt genau dafür gedachte Beschriftung:
 
 - Textbausteine („Wort1“, „Wort2“, …) in einem **Pool** anlegen.
-- Bausteine **per Drag & Drop** aus dem Pool auf eine Fläche des Modells
-  ziehen.
+- Bausteine **per Pointer-Drag** aus dem Pool auf eine Fläche des Modells
+  ziehen — schon **beim Ziehen** zeigt eine Live-Vorschau (Ghost-Platzierung
+  im Preview-Shader), wo der Block landen würde. Bewusst KEIN natives
+  HTML5-DnD: die Drag-Session pausiert requestAnimationFrame (kein Live-
+  Render möglich) und das OS-Drag-Image verdeckt den Cursor. 6-px-Schwelle
+  trennt Klick (auswählen) vom Ziehen; Pointer-Capture auf dem Pool-
+  Container, damit pointerup außerhalb des Fensters ankommt.
 - Jeder Baustein hat **eigene Parameter** (Marburg-Medium-Defaults aus
   `Exportierte Parameter.csv`); Regler-Änderungen wirken auf **alle**
   Platzierungen des Bausteins gleichzeitig.
@@ -151,7 +156,17 @@ sichtbar; der Export nimmt alle).
   Bake und 3D-Preview nutzen sie). Decimation sperrt Blockflächen
   (`hardFaces`), damit Punkte nicht kollabieren.
 - **Platzieren** schaltet die 3D-Preview aus (Raycast braucht die
-  Basisoberfläche, nicht die verdrängte).
+  Basisoberfläche, nicht die verdrängte). Gilt auch für die Ghost-Vorschau:
+  Dragstart merkt sich den Zustand und schaltet aus, Abbruch (Esc/
+  pointercancel/loswerlassen daneben) stellt wieder her, der Drop lässt sie
+  aus. Der Ghost lebt nur in `_brailleGhost` + `_previewBlocks`
+  (Shader-Uniforms) — nie im Pool, nie im Export (`_blockPipelineLayers`
+  liest nur echte Platzierungen); der Atlas (`_ensureBlockAtlas(ghostBlock)`)
+  muss den Ghost-Block mit packen, damit er auch ohne eigene Platzierung ein
+  Rect bekommt. Im Plain-Zustand (keine Textur, keine Platzierung) ist
+  `previewMaterial` null — der Ghost baut es dann selbst (wie
+  `updatePreview`) und `_clearBrailleGhost` entsorgt es über `updatePreview`
+  wieder, solange kein Export-Inhalt existiert.
 - **Worker**: Block-Layer laufen strukturgeklont in den Export-Worker
   (`settings.block` = Deskriptor, plain data) — keine THREE/DOM-Objekte in
   Block-Layern ablegen.
@@ -168,4 +183,7 @@ node tests/exportStreaming.test.mjs  3MF-Formatdetails
 npm test                             alle zusammen
 ```
 
-Dev-Server: `python -m http.server 8791` im Projektordner → http://localhost:8791
+Dev-Server: `node dev-server.mjs` im Projektordner → http://127.0.0.1:8791
+(sendet `Cache-Control: no-cache`; `python -m http.server` sendet keine
+Header, der Browser cached ES-Module dann heuristisch und lädt z.B. alte
+`i18n/*.js` — neue UI-Strings erscheinen als rohe Keys)

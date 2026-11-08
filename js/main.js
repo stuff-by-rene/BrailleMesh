@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { initViewer, loadGeometry, setMeshMaterial, setMeshGeometry, setWireframe,
          getControls, getCamera, getCurrentMesh,
          setExclusionOverlay, setHoverPreview, setViewerTheme,
-         setProjection, requestRender,
+         setProjection, requestRender, renderNow,
          clearDiagOverlays, setDiagEdges, addDiagFaces,
          setRotationGizmo, isGizmoDragging, isSoftwareRendering, setTurntable,
          setSectionView, setSectionAxis, flipSection, setSectionHandlesLocked,
@@ -241,6 +241,11 @@ let _brailleSeq = 0;
 let _brailleMapCache = new Map();  // mapKey → generateBrailleMap result
 let _blockAtlas = null;            // { texture, rects, sig } for the preview shader
 let _brailleMoveDrag = null;       // { blockIdx, plIdx } while dragging a placement
+let _brailleGhost = null;          // { blockId, center[3], normal[3] } live drop preview while dragging a pool block
+let _brailleDragBlockId = null;    // block id while the pointer drag from the pool is active (null = not dragging)
+let _brailleDragPointerId = -1;    // pointer that owns the active pool drag
+let _braillePoolPress = null;      // { blockId, pointerId, x, y } between row pointerdown and the drag threshold
+let _brailleDragDispWasOn = false; // displacement preview was on when the drag turned it off
 let _brailleCamAnim = 0;           // camera-swing animation frame handle
 
 // ── Canvas filter support (Safari / iOS WebView don't support ctx.filter) ────
@@ -1674,44 +1679,20 @@ function wireEvents() {
     handleModelFile(file);
   });
 
-  // Drag & drop on the viewport section — a Braille pool block dropped onto
-  // the model places it at the drop point; anything else is a model file.
+  // Drag & drop on the viewport section — model/project FILES only. Braille
+  // pool blocks are dragged with POINTER events instead of native DnD: a
+  // native drag session pauses requestAnimationFrame (no live ghost preview
+  // can render) and the OS drag image covers the cursor.
   dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     dropZone.classList.add('drag-over');
-    if (brailleMode && [...(e.dataTransfer?.types ?? [])].includes('text/bumpmesh-braille')) {
-      dropZone.classList.add('braille-drag-over');
-    }
   });
   dropZone.addEventListener('dragleave', () => {
     dropZone.classList.remove('drag-over');
-    dropZone.classList.remove('braille-drag-over');
   });
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    dropZone.classList.remove('braille-drag-over');
-    // Braille block from the pool → place it at the drop point.
-    const brailleId = e.dataTransfer.getData('text/bumpmesh-braille');
-    if (brailleId !== '' && currentGeometry) {
-      const idx = braillePool.findIndex(B => String(B.id) === brailleId);
-      if (idx >= 0) {
-        if (settings.useDisplacement) {
-          settings.useDisplacement = false;
-          dispPreviewToggle.checked = false;
-          toggleDisplacementPreview(false);
-        }
-        brailleActiveBlock = idx;
-        brailleActivePlacement = -1;
-        const mesh = getCurrentMesh();
-        _raycaster.setFromCamera(_canvasNDC(e), getCamera());
-        const hit = mesh ? getFrontFaceHit(_raycaster.intersectObject(mesh), mesh) : null;
-        if (hit) _placeBrailleAtHit(hit);
-        _renderBraillePool();
-        _renderBrailleEditor();
-      }
-      return;
-    }
     const files = [...e.dataTransfer.files];
     const bmFile = files.find(f => /\.bumpmesh$/i.test(f.name));
     if (bmFile) { importProject(bmFile).catch(err => alert(t('alerts.importFailed', { msg: err.message }))); return; }
@@ -2284,15 +2265,39 @@ function wireEvents() {
     _selectBrailleBlock(i);
     if (toPlacements) _scrollToBraillePlacements();
   });
-  braillePoolEl?.addEventListener('dragstart', (e) => {
+  // Pool → model dragging is POINTER-based (not native HTML5 DnD): a native
+  // drag session pauses requestAnimationFrame, so no live ghost preview can
+  // render, and the OS drag image (square + plus) covers the cursor. The
+  // press waits at a 6 px threshold so plain clicks still select; past it
+  // the ghost shows the block at the cursor's face hit and pointerup places
+  // it there.
+  braillePoolEl?.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
     const row = e.target.closest('.braille-pool-row');
-    if (!row) return;
-    e.dataTransfer.setData('text/bumpmesh-braille', row.dataset.blockId);
-    e.dataTransfer.effectAllowed = 'copy';
-    row.classList.add('dragging');
+    if (!row || !row.dataset.blockId) return;
+    _braillePoolPress = { blockId: row.dataset.blockId, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
   });
-  braillePoolEl?.addEventListener('dragend', (e) => {
-    e.target.closest('.braille-pool-row')?.classList.remove('dragging');
+  document.addEventListener('pointermove', (e) => {
+    if (_braillePoolPress) {
+      if (e.pointerId !== _braillePoolPress.pointerId) return;
+      const dx = e.clientX - _braillePoolPress.x, dy = e.clientY - _braillePoolPress.y;
+      if (dx * dx + dy * dy < 36) return;
+      // Capture on the persistent container: pointerup outside the window
+      // still arrives, and the click after a finished drag retargets here
+      // (away from the row) instead of mis-selecting.
+      try { braillePoolEl.setPointerCapture(e.pointerId); } catch { /* already released */ }
+      _startBraillePoolDrag(_braillePoolPress.blockId, e.pointerId);
+      _braillePoolPress = null;
+    }
+    if (_brailleDragBlockId && e.pointerId === _brailleDragPointerId) _braillePoolDragMove(e);
+  });
+  document.addEventListener('pointerup', (e) => {
+    if (_braillePoolPress && e.pointerId === _braillePoolPress.pointerId) _braillePoolPress = null;
+    if (_brailleDragBlockId && e.pointerId === _brailleDragPointerId) _finishBraillePoolDrag(e);
+  });
+  document.addEventListener('pointercancel', () => {
+    _braillePoolPress = null;
+    if (_brailleDragBlockId) _cancelBraillePoolDrag();
   });
   braillePlacementsEl?.addEventListener('click', (e) => {
     const row = e.target.closest('.braille-placement-row');
@@ -2619,6 +2624,7 @@ function wireEvents() {
       if (rotateActive) toggleRotateMode(false);
       if (placeOnFaceActive) togglePlaceOnFace(false);
       if (stampPlaceActive || _stampWheelArmed) toggleStampPlace(false);
+      if (_brailleDragBlockId) _cancelBraillePoolDrag();
       if (exclusionTool) setExclusionTool(null);
       licenseOverlay.classList.add('hidden');
       imprintOverlay.classList.add('hidden');
@@ -3510,11 +3516,11 @@ function _hasExportContent() {
 }
 
 /** Rebuild the shared block atlas when any block's map changed. */
-function _ensureBlockAtlas() {
+function _ensureBlockAtlas(ghostBlock = null) {
   const items = [];
   const sigParts = [];
   for (const B of braillePool) {
-    if (!B.placements.length) continue;
+    if (!B.placements.length && B !== ghostBlock) continue;
     const map = _brailleMapFor(B);
     if (!map) continue;
     B.map = map;
@@ -3531,19 +3537,29 @@ function _ensureBlockAtlas() {
   return _blockAtlas;
 }
 
-/** Block placements for the preview shader (capped at MAX_PREVIEW_BLOCKS). */
+/** Block placements for the preview shader (capped at MAX_PREVIEW_BLOCKS).
+ *  While a pool block is dragged over the model, a ghost pseudo-placement
+ *  renders it at the hover hit — pure preview state, the pool is untouched. */
 function _previewBlocks() {
-  if (!_hasBraillePlacements()) return { list: [], atlasTex: null };
-  const atlas = _ensureBlockAtlas();
+  const ghostBlock = _brailleGhost ? braillePool.find(B => String(B.id) === _brailleGhost.blockId) : null;
+  if (!_hasBraillePlacements() && !ghostBlock) return { list: [], atlasTex: null };
+  const atlas = _ensureBlockAtlas(ghostBlock);
   if (!atlas) return { list: [], atlasTex: null };
   const list = [];
   for (const B of braillePool) {
-    if (!B.map || !B.placements.length) continue;
+    const isGhost = B === ghostBlock;
+    if (!B.map || (!B.placements.length && !isGhost)) continue;
     const rect = atlas.rects.get(B.id);
     if (!rect) continue;
     for (const pl of B.placements) {
       if (list.length >= MAX_PREVIEW_BLOCKS) return { list, atlasTex: atlas.texture };
       list.push({ desc: blockDescriptor(B, pl), rect });
+    }
+    if (isGhost && list.length < MAX_PREVIEW_BLOCKS) {
+      list.push({
+        desc: blockDescriptor(B, { center: _brailleGhost.center, normal: _brailleGhost.normal, rotation: 0 }),
+        rect,
+      });
     }
   }
   return { list, atlasTex: atlas.texture };
@@ -3739,7 +3755,6 @@ function _renderBraillePool() {
   braillePool.forEach((B, i) => {
     const row = document.createElement('div');
     row.className = 'braille-pool-row' + (i === brailleActiveBlock ? ' active' : '');
-    row.draggable = true;
     row.dataset.blockId = String(B.id);
     row.title = t('braille.poolRowTitle', { label: B.label });
 
@@ -4164,6 +4179,127 @@ function _setBraillePlacementRotation(v) {
     updatePreview();
   }
   return r;
+}
+
+/** Pointer drag from the pool: past the 6 px threshold the drag starts —
+ *  the displacement preview goes off (the ghost raycasts the base surface,
+ *  the drop keeps it off anyway) and the ghost follows the cursor. */
+function _startBraillePoolDrag(blockId, pointerId) {
+  _brailleDragBlockId = blockId;
+  _brailleDragPointerId = pointerId;
+  _brailleGhost = null;
+  _brailleDragDispWasOn = settings.useDisplacement;
+  if (_brailleDragDispWasOn) {
+    settings.useDisplacement = false;
+    dispPreviewToggle.checked = false;
+    toggleDisplacementPreview(false);
+    renderNow();   // draw the base-geometry swap immediately
+  }
+  canvas.style.cursor = 'grabbing';
+}
+
+/** While dragging: ghost only when the pointer is over the viewport — over
+ *  the sidebar the ray would cast through geometry the cursor isn't on. */
+function _braillePoolDragMove(e) {
+  const r = canvas.getBoundingClientRect();
+  const overCanvas = e.clientX >= r.left && e.clientX <= r.right
+                  && e.clientY >= r.top && e.clientY <= r.bottom;
+  if (!overCanvas) { _clearBrailleGhost(); return; }
+  _updateBrailleGhost(e);
+}
+
+/** pointerup ends the drag: over the model with a face hit → place there
+ *  (the displacement preview stays off, like the old drop); otherwise
+ *  cancel and restore the preview. */
+function _finishBraillePoolDrag(e) {
+  const blockId = _brailleDragBlockId;
+  _brailleDragBlockId = null;
+  _brailleDragPointerId = -1;
+  canvas.style.cursor = '';
+  const idx = braillePool.findIndex(B => String(B.id) === blockId);
+  const mesh = getCurrentMesh();
+  const r = canvas.getBoundingClientRect();
+  const overCanvas = e.clientX >= r.left && e.clientX <= r.right
+                  && e.clientY >= r.top && e.clientY <= r.bottom;
+  let hit = null;
+  if (idx >= 0 && overCanvas && mesh) {
+    _raycaster.setFromCamera(_canvasNDC(e), getCamera());
+    hit = getFrontFaceHit(_raycaster.intersectObject(mesh), mesh);
+  }
+  if (hit) {
+    brailleActiveBlock = idx;
+    brailleActivePlacement = -1;
+    _placeBrailleAtHit(hit);   // content exists now — clearing the ghost is then a cheap uniform sync
+    _clearBrailleGhost();
+  } else {
+    _cancelBraillePoolDrag();
+  }
+}
+
+/** Drag aborted (Escape / pointercancel / released off the model): ghost
+ *  away, nothing placed, displacement preview back if the drag turned it off. */
+function _cancelBraillePoolDrag() {
+  _brailleDragBlockId = null;
+  _brailleDragPointerId = -1;
+  canvas.style.cursor = '';
+  _clearBrailleGhost();
+  if (_brailleDragDispWasOn) {
+    _brailleDragDispWasOn = false;
+    dispPreviewToggle.checked = true;
+    toggleDisplacementPreview(true);
+  }
+}
+
+/** Live drop preview while a pool block is dragged over the model: raycast
+ *  the base surface and render the block there through the preview shader —
+ *  the user sees the exact result before releasing the mouse button. */
+function _updateBrailleGhost(e) {
+  if (!_brailleDragBlockId) return;
+  const mesh = getCurrentMesh();
+  if (!mesh) { _clearBrailleGhost(); return; }
+  _raycaster.setFromCamera(_canvasNDC(e), getCamera());
+  const hit = getFrontFaceHit(_raycaster.intersectObject(mesh), mesh);
+  if (!hit) {
+    _clearBrailleGhost();
+    return;
+  }
+  const n = hit.face.normal.clone().normalize();
+  const center = [hit.point.x, hit.point.y, hit.point.z];
+  const normal = [n.x, n.y, n.z];
+  const g = _brailleGhost;
+  if (g && g.blockId === _brailleDragBlockId
+      && _ghostNear(g.center, center, 0.04) && _ghostNear(g.normal, normal, 0.0025)) return;
+  _brailleGhost = { blockId: _brailleDragBlockId, center, normal };
+  if (!previewMaterial) {
+    // Plain-material state (no texture, no placement yet): the ghost needs
+    // the shader material — build it exactly like updatePreview does.
+    _refreshPaintGeometry();
+    const activeGeo = _displayGeometry();
+    updateFaceMask(activeGeo);
+    const preview = _previewLayers();
+    previewMaterial = createPreviewMaterial(preview.list, _materialSettings(preview));
+    loadGeometry(activeGeo, previewMaterial);
+  }
+  _syncPreviewMaterial();
+  renderNow();   // the on-demand loop may not have a frame scheduled now
+}
+
+/** Squared-distance gate so a held-still hover doesn't resync every dragover. */
+function _ghostNear(a, b, maxDist2) {
+  const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+  return dx * dx + dy * dy + dz * dz < maxDist2;
+}
+
+function _clearBrailleGhost() {
+  if (!_brailleGhost) return;
+  _brailleGhost = null;
+  if (!_hasExportContent()) {
+    // The material existed only for the ghost — back to the plain look.
+    updatePreview();
+  } else {
+    _syncPreviewMaterial();
+  }
+  renderNow();
 }
 
 function _placeBrailleAtHit(hit) {
