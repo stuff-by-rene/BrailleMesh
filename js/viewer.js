@@ -880,17 +880,21 @@ export function loadGeometry(geometry, material) {
  * Update only the material on the current mesh.
  * @param {THREE.Material} material
  */
-export function setMeshMaterial(material) {
+let _plainMat = null;
+export function setMeshMaterial(material, keepOld = false) {
   if (!currentMesh) return;
-  if (currentMesh.material && currentMesh.material.dispose) {
+  if (!keepOld && currentMesh.material && currentMesh.material.dispose) {
     currentMesh.material.dispose();
   }
-  currentMesh.material = _clip(material || new THREE.MeshStandardMaterial({
-    color: 0xaaaacc,
-    roughness: 0.6,
-    metalness: 0.1,
-    side: THREE.DoubleSide,
-  }));
+  if (!material && !_plainMat) {
+    _plainMat = new THREE.MeshStandardMaterial({
+      color: 0xaaaacc,
+      roughness: 0.6,
+      metalness: 0.1,
+      side: THREE.DoubleSide,
+    });
+  }
+  currentMesh.material = _clip(material || _plainMat);
   _section.setTarget(currentMesh);
   requestRender();
 }

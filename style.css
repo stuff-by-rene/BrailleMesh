@@ -2868,6 +2868,15 @@ body.braille-mode #settings-panel > #sec-braille { display: block; }
   margin: 2px 0 10px;
 }
 
+/* The "no blocks yet" hint only shows while the pool is empty. There is no
+   app-wide `.hidden { display: none }`; every component carries its own. */
+.braille-pool-empty.hidden { display: none; }
+
+/* Only the block-title head is tied to the text content — the editor body
+   (text field, parameters, placements) is the workspace's control panel and
+   stays visible. */
+.braille-editor-head.hidden { display: none; }
+
 .braille-pool-row {
   display: flex;
   align-items: center;

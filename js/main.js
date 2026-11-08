@@ -248,6 +248,20 @@ let _braillePoolPress = null;      // { blockId, pointerId, x, y } between row p
 let _brailleDragDispWasOn = false; // displacement preview was on when the drag turned it off
 let _brailleCamAnim = 0;           // camera-swing animation frame handle
 
+// ── Outline wrap (projection mode 8) — STATE ────────────────────────────────
+// Declared at the TOP on purpose: updatePreview reaches the outline-wrap
+// helpers during the module's initial loadDefaultCube() (TDZ trap — see
+// AGENTS.md). The full section (worker, tables, places) lives further down.
+let _owWorker = null;
+let _owWorkerFailed = false;
+let _owWorkerInit = null;
+let _owSeq = 0;
+const _owWaiting = new Map();   // request id → { resolve, reject }
+let _owKey = null;              // the base mesh the tables (or the error) belong to
+let _owWrap = null;             // its tables, or null
+let _owError = null;            // why the outline wrap cannot follow it, or null
+let _owBuild = null;            // the build in flight for _owKey
+
 // ── Canvas filter support (Safari / iOS WebView don't support ctx.filter) ────
 const CANVAS_FILTER_SUPPORTED = 'filter' in CanvasRenderingContext2D.prototype;
 
@@ -522,6 +536,7 @@ const brailleAddBtn        = document.getElementById('braille-add-btn');
 const braillePoolEl        = document.getElementById('braille-pool');
 const braillePoolEmptyEl   = document.getElementById('braille-pool-empty');
 const brailleEditorEl      = document.getElementById('braille-editor');
+const brailleEditorHeadEl  = document.getElementById('braille-editor-head');
 const brailleEditorTitleEl = document.getElementById('braille-editor-title');
 const brailleEditText      = document.getElementById('braille-edit-text');
 const brailleEditLang      = document.getElementById('braille-edit-lang');
@@ -1396,6 +1411,10 @@ scaleVVal.value = fmtScaleVal(posToScale(parseFloat(scaleVSlider.value)));
 
 // Load geometry immediately — don't wait for textures
 loadDefaultCube();
+
+// Firefox restores form fields on reload — the text input is transient state
+// (the pool is the persistent one), so it always starts empty.
+brailleTextInput.value = '';
 
 // Per-parameter reset arrows for the texture/projection/tool rows. Built
 // AFTER wireEvents so the reset clicks reach the existing change/input wiring.
@@ -3782,14 +3801,17 @@ function _renderBraillePool() {
 
 function _renderBrailleEditor() {
   const B = braillePool[brailleActiveBlock];
-  if (!B || !brailleEditorEl) {
-    brailleEditorEl?.classList.add('hidden');
+  // The editor body (text field, parameters, placements) is the workspace's
+  // control panel and stays visible; only the block-title head follows the
+  // text content.
+  brailleEditorEl?.classList.remove('hidden');
+  brailleEditorHeadEl?.classList.toggle('hidden', !B);
+  if (!B) {
     // Browsers restore form values across a reload (Firefox in particular);
     // without an active block the field must not keep stale text.
     if (brailleEditText) brailleEditText.value = '';
     return;
   }
-  brailleEditorEl.classList.remove('hidden');
   brailleEditorTitleEl.textContent = B.label;
   if (document.activeElement !== brailleEditText) brailleEditText.value = B.text;
   if (brailleEditLang) brailleEditLang.value = B.params.language;
@@ -4271,14 +4293,16 @@ function _updateBrailleGhost(e) {
       && _ghostNear(g.center, center, 0.04) && _ghostNear(g.normal, normal, 0.0025)) return;
   _brailleGhost = { blockId: _brailleDragBlockId, center, normal };
   if (!previewMaterial) {
-    // Plain-material state (no texture, no placement yet): the ghost needs
-    // the shader material — build it exactly like updatePreview does.
+    // Plain-material state (no texture, no placement yet): build the shader
+    // material for the ghost, exactly like updatePreview does.
     _refreshPaintGeometry();
     const activeGeo = _displayGeometry();
     updateFaceMask(activeGeo);
     const preview = _previewLayers();
     previewMaterial = createPreviewMaterial(preview.list, _materialSettings(preview));
     loadGeometry(activeGeo, previewMaterial);
+  } else if (getCurrentMesh().material !== previewMaterial) {
+    setMeshMaterial(previewMaterial, true);   // reuse the idling material — no recompile
   }
   _syncPreviewMaterial();
   renderNow();   // the on-demand loop may not have a frame scheduled now
@@ -4294,8 +4318,9 @@ function _clearBrailleGhost() {
   if (!_brailleGhost) return;
   _brailleGhost = null;
   if (!_hasExportContent()) {
-    // The material existed only for the ghost — back to the plain look.
-    updatePreview();
+    // Back to the cheap plain look; the shader material object stays alive
+    // for the next drag (no dispose → no program recompile hitch).
+    if (previewMaterial) setMeshMaterial(null, true);
   } else {
     _syncPreviewMaterial();
   }
@@ -6849,12 +6874,11 @@ function updatePreview() {
   _syncTxResetArrows();
 
   if (!_hasExportContent()) {
-    // No map and no Braille yet — plain material
-    if (previewMaterial) {
-      setMeshMaterial(null);
-      previewMaterial.dispose();
-      previewMaterial = null;
-    }
+    // No map and no Braille yet — the cheap plain material (the heavy
+    // preview shader only runs when there is something to show). keepOld
+    // keeps the shader material object AND its compiled program alive, so
+    // a ghost drag reuses it instead of recompiling on every drag start.
+    if (previewMaterial) setMeshMaterial(null, true);
     exportBtn.disabled = true;
     export3mfBtn.disabled = true;
     export3mfPartBtn?.classList.add('hidden');
@@ -6877,6 +6901,9 @@ function updatePreview() {
     previewMaterial = createPreviewMaterial(preview.list, _materialSettings(preview));
     loadGeometry(activeGeo, previewMaterial);
   } else {
+    // After a ghost cycle the mesh may still wear the plain material —
+    // swap the idling shader material back on (no recompile, same object).
+    if (getCurrentMesh().material !== previewMaterial) setMeshMaterial(previewMaterial, true);
     updateMaterial(previewMaterial, preview.list, _materialSettings(preview));
   }
 
@@ -7446,18 +7473,14 @@ async function runPipeline(input, onEvent, isStale) {
 // geometry's uuid and position version, so Rotate and Place on Face (which
 // move the vertices in place) and a new model rebuild them. When the outline
 // wrap cannot follow the mesh, it maps as cylindrical (mapping.js) and a note
-// under the Projection select says so.
-let _owWorker = null;
-let _owWorkerFailed = false;
-let _owWorkerInit = null;
-let _owSeq = 0;
-const _owWaiting = new Map();   // request id → { resolve, reject }
-let _owKey = null;              // the base mesh the tables (or the error) belong to
-let _owWrap = null;             // its tables, or null
-let _owError = null;            // why the outline wrap cannot follow it, or null
-let _owBuild = null;            // the build in flight for _owKey
+// under the Projection select says so. (State declarations live at the TOP of
+// the module — updatePreview reaches them during the initial load.)
 
-const _owKeyOf = (geo) => geo ? `${geo.uuid}:${geo.attributes.position.version}` : null;
+/** Key of the base mesh the outline-wrap tables belong to. Hoisted function —
+ *  updatePreview calls it during the module's initial loadDefaultCube(). */
+function _owKeyOf(geo) {
+  return geo ? `${geo.uuid}:${geo.attributes.position.version}` : null;
+}
 
 /** Whether a layer on screen uses the outline wrap. */
 function _owUsed() {

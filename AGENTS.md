@@ -100,7 +100,17 @@ sichtbar; der Export nimmt alle).
 - **GLSL in Template-Literals**: KEINE Backticks in Kommentaren innerhalb der
   Shader-Strings (beendet das Literal). Nach Shader-Änderungen die App im
   Browser öffnen — ein Kompilierfehler macht das Mesh unsichtbar, ohne dass
-  die App crasht.
+  die App crasht. Material-Modell: ohne Inhalt trägt das Mesh das billige
+  Plain-Material (PBR), mit Inhalt/Ghost das Preview-Shader-Material —
+  `setMeshMaterial(mat, keepOld)` hält beim Wechsel das alte Material-Objekt
+  am Leben (Cached-Plain in viewer.js), damit der Ghost es wiederverwendet,
+  statt pro Drag das Programm neu zu kompilieren (Recompile-Hänger je Drag).
+  Der `brailleOnly`-Zweig (kein Layer oder einziger Layer ohne Amplitude)
+  passt die Basis per **branch-freier** Arithmetik (`mix`, Weltlichter über
+  das eingebaute `viewMatrix`, Werte aus viewer.js hartkodiert) an den
+  Plain-Look an, und Punkte (Map-Grau > 0,5) werden heller getönt. KEINE
+  if/else-Verzweigung im Farbpfad und KEINE neuen Varyings — beides hat den
+  WebGL-Kontext abgeschossen („context was lost", tot bis Reload).
 - **i18n**: jedes neue `t('key')` braucht den Key in `de.js` UND `en.js`.
 - **Version bumpen** (`js/version.js`) bei jedem sichtbaren Stand.
 - **Undo/Session/Projekt**: Braille-State hängt in `_brailleSnapshot` /

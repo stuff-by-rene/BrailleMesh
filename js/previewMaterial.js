@@ -627,7 +627,9 @@ const fragmentShader = /* glsl */`
 
   // Block bump: same over-recurrence, driven by the block map's grey
   // gradient. Straight-line per block (no loops) — see the ANGLE note above.
-  void bumpBlock(int b, vec3 PN, float wb, inout float dhx, inout float dhy, inout float coverSum) {
+  // Also folds the winning block's map grey + coverage out, so the fragment
+  // can tint the dots a distinct colour (blockGrey > 0.5 = dot height).
+  void bumpBlock(int b, vec3 PN, float wb, inout float dhx, inout float dhy, inout float coverSum, inout float blockCov, inout float blockGrey) {
     float inside;
     float grey = blockGreyAt(b, vModelPos, inside);
     float gx = dFdx(grey) * 2.0 * blockAmp[b];
@@ -635,6 +637,8 @@ const fragmentShader = /* glsl */`
     dhx = dhx * (1.0 - wb) + gx * wb;
     dhy = dhy * (1.0 - wb) + gy * wb;
     coverSum = coverSum * (1.0 - wb) + wb;
+    blockGrey = blockGrey * (1.0 - wb) + grey * wb;
+    blockCov = blockCov * (1.0 - wb) + wb;
   }
 
   void main() {
@@ -700,14 +704,17 @@ const fragmentShader = /* glsl */`
     if (layerCount > 3) bumpLayer(3, PN, w.w, dhx, dhy, coverSum);
 
     // Braille blocks fold over the layers (same straight-line pattern).
-    if (blockCount > 0) bumpBlock(0, PN, blockAnchor(0, PN) * blockInside(0), dhx, dhy, coverSum);
-    if (blockCount > 1) bumpBlock(1, PN, blockAnchor(1, PN) * blockInside(1), dhx, dhy, coverSum);
-    if (blockCount > 2) bumpBlock(2, PN, blockAnchor(2, PN) * blockInside(2), dhx, dhy, coverSum);
-    if (blockCount > 3) bumpBlock(3, PN, blockAnchor(3, PN) * blockInside(3), dhx, dhy, coverSum);
-    if (blockCount > 4) bumpBlock(4, PN, blockAnchor(4, PN) * blockInside(4), dhx, dhy, coverSum);
-    if (blockCount > 5) bumpBlock(5, PN, blockAnchor(5, PN) * blockInside(5), dhx, dhy, coverSum);
-    if (blockCount > 6) bumpBlock(6, PN, blockAnchor(6, PN) * blockInside(6), dhx, dhy, coverSum);
-    if (blockCount > 7) bumpBlock(7, PN, blockAnchor(7, PN) * blockInside(7), dhx, dhy, coverSum);
+    // blockCov/blockGrey carry the winning block's coverage + map grey out
+    // for the dot tint (grey > 0.5 = dot height).
+    float blockCov = 0.0, blockGrey = 0.5;
+    if (blockCount > 0) bumpBlock(0, PN, blockAnchor(0, PN) * blockInside(0), dhx, dhy, coverSum, blockCov, blockGrey);
+    if (blockCount > 1) bumpBlock(1, PN, blockAnchor(1, PN) * blockInside(1), dhx, dhy, coverSum, blockCov, blockGrey);
+    if (blockCount > 2) bumpBlock(2, PN, blockAnchor(2, PN) * blockInside(2), dhx, dhy, coverSum, blockCov, blockGrey);
+    if (blockCount > 3) bumpBlock(3, PN, blockAnchor(3, PN) * blockInside(3), dhx, dhy, coverSum, blockCov, blockGrey);
+    if (blockCount > 4) bumpBlock(4, PN, blockAnchor(4, PN) * blockInside(4), dhx, dhy, coverSum, blockCov, blockGrey);
+    if (blockCount > 5) bumpBlock(5, PN, blockAnchor(5, PN) * blockInside(5), dhx, dhy, coverSum, blockCov, blockGrey);
+    if (blockCount > 6) bumpBlock(6, PN, blockAnchor(6, PN) * blockInside(6), dhx, dhy, coverSum, blockCov, blockGrey);
+    if (blockCount > 7) bumpBlock(7, PN, blockAnchor(7, PN) * blockInside(7), dhx, dhy, coverSum, blockCov, blockGrey);
     coverSum = clamp(coverSum, 0.0, 1.0);
 
     vec3 dp1 = dFdx(vViewPos);
@@ -787,6 +794,23 @@ const fragmentShader = /* glsl */`
 
     // Blend: 100% mask colour at the boundary, fading to 0% at falloff distance
     vec3 color = mix(litTeal, litMask, maskEffect);
+
+    // Braille-only base: match the plain material's world-lit look (PBR +
+    // ACES measured ≈ 0.36-0.51× of the sRGB albedo). The scene lights
+    // (viewer.js: dir1 1.2 white from (80, 120, 60), dir2 0.4 #8899ff from
+    // (-60, -20, -80), ambient 0.4 in the constant part) go through the
+    // built-in viewMatrix — arithmetically, NO branch (an if/else around
+    // the colour path took the WebGL context down on this driver).
+    // KEEP IN SYNC with viewer.js's lights!
+    float d1 = max(dot(bumpN, normalize((viewMatrix * vec4(80.0, 120.0, 60.0, 0.0)).xyz)), 0.0);
+    float d2 = max(dot(bumpN, normalize((viewMatrix * vec4(-60.0, -20.0, -80.0, 0.0)).xyz)), 0.0);
+    color = mix(color, tealBase * (0.36 + 0.22 * d1 + 0.04 * d2 * vec3(0.85, 0.92, 1.0)), float(brailleOnly));
+
+    // Dot tint: the winning block's map grey above 0.5 is dot height —
+    // render the dots LIGHTER than the dark base, like a label on a plate
+    // (the export is real geometry regardless).
+    float dotness = clamp((blockGrey - 0.5) * 2.0, 0.0, 1.0) * blockCov;
+    color = mix(color, tealBase * 1.15 + vec3(0.06), dotness);
 
     // Section view: discard last, so every dFdx/dFdy above ran in uniform control flow.
     #include <clipping_planes_fragment>
