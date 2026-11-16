@@ -827,7 +827,10 @@ const fragmentShader = /* glsl */`
     // sit at/below 0.5 grey (the scale spans to the pocket floor), so the
     // map's blue dot marker (braille.js dotMask) drives the tint there.
     float dotness = max(clamp((blockGrey - 0.5) * 2.0, 0.0, 1.0), blockDot) * blockCov;
-    color = mix(color, tealBase * 1.15 + vec3(0.06), dotness);
+    // The tint LIGHTENS the shaded colour instead of replacing it - a
+    // constant dot colour would paint over the bump shading and make
+    // even physically raised dots read as flat stickers.
+    color = mix(color, color * 1.3 + vec3(0.04), dotness);
 
     // Section view: discard last, so every dFdx/dFdy above ran in uniform control flow.
     #include <clipping_planes_fragment>
