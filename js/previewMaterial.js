@@ -137,6 +137,20 @@ const sharedGLSL = /* glsl */`
     return texture2D(blockAtlas, r.xy + clamp(uv, 0.0, 1.0) * r.zw).r;
   }
 
+  // Block b's dot marker (map blue channel, 255 where a dot was stamped).
+  // Raised dots exceed 0.5 grey and tint via the grey rule, but a recessed
+  // block's dot tops sit AT or BELOW 0.5 — the blue marker is what makes them
+  // tint as well. Same sampling as blockGreyAt; see braille.js's dotMask.
+  float blockDotAt(int b, vec3 pos) {
+    vec3 rel = pos - blockCenter[b];
+    float a  = dot(rel, blockRight[b]);
+    float bb = dot(rel, blockUp[b]);
+    vec2 uv = vec2((a + blockSize[b].x * 0.5) / blockSize[b].x,
+                   (bb + blockSize[b].y * 0.5) / blockSize[b].y);
+    vec4 r = blockRect[b];
+    return texture2D(blockAtlas, r.xy + clamp(uv, 0.0, 1.0) * r.zw).b;
+  }
+
   // Block b's face anchor at a point: smoothstep on the cosine between the
   // face normal and the block normal (mirrors anchorFactor in brailleBlocks.js).
   float blockAnchor(int b, vec3 faceN) {
@@ -629,7 +643,7 @@ const fragmentShader = /* glsl */`
   // gradient. Straight-line per block (no loops) — see the ANGLE note above.
   // Also folds the winning block's map grey + coverage out, so the fragment
   // can tint the dots a distinct colour (blockGrey > 0.5 = dot height).
-  void bumpBlock(int b, vec3 PN, float wb, inout float dhx, inout float dhy, inout float coverSum, inout float blockCov, inout float blockGrey) {
+  void bumpBlock(int b, vec3 PN, float wb, inout float dhx, inout float dhy, inout float coverSum, inout float blockCov, inout float blockGrey, inout float blockDot) {
     float inside;
     float grey = blockGreyAt(b, vModelPos, inside);
     float gx = dFdx(grey) * 2.0 * blockAmp[b];
@@ -638,6 +652,7 @@ const fragmentShader = /* glsl */`
     dhy = dhy * (1.0 - wb) + gy * wb;
     coverSum = coverSum * (1.0 - wb) + wb;
     blockGrey = blockGrey * (1.0 - wb) + grey * wb;
+    blockDot = blockDot * (1.0 - wb) + blockDotAt(b, vModelPos) * wb;
     blockCov = blockCov * (1.0 - wb) + wb;
   }
 
@@ -706,15 +721,15 @@ const fragmentShader = /* glsl */`
     // Braille blocks fold over the layers (same straight-line pattern).
     // blockCov/blockGrey carry the winning block's coverage + map grey out
     // for the dot tint (grey > 0.5 = dot height).
-    float blockCov = 0.0, blockGrey = 0.5;
-    if (blockCount > 0) bumpBlock(0, PN, blockAnchor(0, PN) * blockInside(0), dhx, dhy, coverSum, blockCov, blockGrey);
-    if (blockCount > 1) bumpBlock(1, PN, blockAnchor(1, PN) * blockInside(1), dhx, dhy, coverSum, blockCov, blockGrey);
-    if (blockCount > 2) bumpBlock(2, PN, blockAnchor(2, PN) * blockInside(2), dhx, dhy, coverSum, blockCov, blockGrey);
-    if (blockCount > 3) bumpBlock(3, PN, blockAnchor(3, PN) * blockInside(3), dhx, dhy, coverSum, blockCov, blockGrey);
-    if (blockCount > 4) bumpBlock(4, PN, blockAnchor(4, PN) * blockInside(4), dhx, dhy, coverSum, blockCov, blockGrey);
-    if (blockCount > 5) bumpBlock(5, PN, blockAnchor(5, PN) * blockInside(5), dhx, dhy, coverSum, blockCov, blockGrey);
-    if (blockCount > 6) bumpBlock(6, PN, blockAnchor(6, PN) * blockInside(6), dhx, dhy, coverSum, blockCov, blockGrey);
-    if (blockCount > 7) bumpBlock(7, PN, blockAnchor(7, PN) * blockInside(7), dhx, dhy, coverSum, blockCov, blockGrey);
+    float blockCov = 0.0, blockGrey = 0.5, blockDot = 0.0;
+    if (blockCount > 0) bumpBlock(0, PN, blockAnchor(0, PN) * blockInside(0), dhx, dhy, coverSum, blockCov, blockGrey, blockDot);
+    if (blockCount > 1) bumpBlock(1, PN, blockAnchor(1, PN) * blockInside(1), dhx, dhy, coverSum, blockCov, blockGrey, blockDot);
+    if (blockCount > 2) bumpBlock(2, PN, blockAnchor(2, PN) * blockInside(2), dhx, dhy, coverSum, blockCov, blockGrey, blockDot);
+    if (blockCount > 3) bumpBlock(3, PN, blockAnchor(3, PN) * blockInside(3), dhx, dhy, coverSum, blockCov, blockGrey, blockDot);
+    if (blockCount > 4) bumpBlock(4, PN, blockAnchor(4, PN) * blockInside(4), dhx, dhy, coverSum, blockCov, blockGrey, blockDot);
+    if (blockCount > 5) bumpBlock(5, PN, blockAnchor(5, PN) * blockInside(5), dhx, dhy, coverSum, blockCov, blockGrey, blockDot);
+    if (blockCount > 6) bumpBlock(6, PN, blockAnchor(6, PN) * blockInside(6), dhx, dhy, coverSum, blockCov, blockGrey, blockDot);
+    if (blockCount > 7) bumpBlock(7, PN, blockAnchor(7, PN) * blockInside(7), dhx, dhy, coverSum, blockCov, blockGrey, blockDot);
     coverSum = clamp(coverSum, 0.0, 1.0);
 
     vec3 dp1 = dFdx(vViewPos);
@@ -808,8 +823,10 @@ const fragmentShader = /* glsl */`
 
     // Dot tint: the winning block's map grey above 0.5 is dot height —
     // render the dots LIGHTER than the dark base, like a label on a plate
-    // (the export is real geometry regardless).
-    float dotness = clamp((blockGrey - 0.5) * 2.0, 0.0, 1.0) * blockCov;
+    // (the export is real geometry regardless). A recessed block's dot tops
+    // sit at/below 0.5 grey (the scale spans to the pocket floor), so the
+    // map's blue dot marker (braille.js dotMask) drives the tint there.
+    float dotness = max(clamp((blockGrey - 0.5) * 2.0, 0.0, 1.0), blockDot) * blockCov;
     color = mix(color, tealBase * 1.15 + vec3(0.06), dotness);
 
     // Section view: discard last, so every dFdx/dFdy above ran in uniform control flow.

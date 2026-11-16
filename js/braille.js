@@ -583,6 +583,12 @@ export function generateBrailleMap(p) {
 
   // ── Depth field (mm, + = above surface) ────────────────────────────────────
   const depth = new Float32Array(W * H);
+  // Dot marker for the preview shader (blue channel of the map): 255 where a
+  // dot was stamped. Raised dots are > 0.5 grey and tint anyway, but a
+  // recessed block's dot tops sit AT or BELOW 0.5 (the grey scale spans to
+  // the pocket floor), so the grey rule alone never tints them. Consumers of
+  // the grey (displacement, export, block height) read the red channel only.
+  const dotMask = new Uint8Array(W * H);
   const recessed = params.mode === 'recessed';
   const recessDepth = Math.max(0, params.recessDepth);
   const recessMargin = Math.max(0, params.recessMargin);
@@ -717,6 +723,7 @@ export function generateBrailleMap(p) {
         const z = dotFloor + stamp[sy * stampSize + sx];
         const idx = row + pxx;
         if (z > depth[idx]) depth[idx] = z;
+        if (stamp[sy * stampSize + sx] > 0) dotMask[idx] = 255;
       }
     }
   };
@@ -813,7 +820,7 @@ export function generateBrailleMap(p) {
   for (let i = 0; i < W * H; i++) {
     const g = Math.round(greyOf(depth[i]) * 255);
     const o = i * 4;
-    data[o] = g; data[o + 1] = g; data[o + 2] = g; data[o + 3] = 255;
+    data[o] = g; data[o + 1] = g; data[o + 2] = dotMask[i]; data[o + 3] = 255;
   }
   ctx.putImageData(imageData, 0, 0);
 
