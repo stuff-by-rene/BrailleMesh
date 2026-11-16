@@ -830,7 +830,7 @@ const fragmentShader = /* glsl */`
     // The tint LIGHTENS the shaded colour instead of replacing it - a
     // constant dot colour would paint over the bump shading and make
     // even physically raised dots read as flat stickers.
-    color = mix(color, color * 1.3 + vec3(0.04), dotness);
+    color = mix(color, color * 1.2 + vec3(0.04), dotness);
 
     // Section view: discard last, so every dFdx/dFdy above ran in uniform control flow.
     #include <clipping_planes_fragment>
